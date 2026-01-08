@@ -183,7 +183,7 @@ def train(
     print(f"  Total updates: {num_updates:,}")
     print()
     
-    @functools.partial(jax.jit, static_argnums=(0, 1))
+    @functools.partial(jax.jit, static_argnums=(0, 1, 4))
     def training_step(env, agent, ppo_state, env_state, rollout_length, gamma, gae_lambda):
         rollout, env_state, ppo_state = collect_rollout(
             env, agent, ppo_state, env_state, rollout_length
