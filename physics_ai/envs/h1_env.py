@@ -126,7 +126,7 @@ class UnitreeH1Env:
             obs=obs,
             reward=jnp.zeros(self.config.num_envs),
             done=jnp.zeros(self.config.num_envs, dtype=jnp.bool_),
-            info={},
+            info={"truncated": jnp.zeros(self.config.num_envs, dtype=jnp.bool_)},
             command=command,
             prev_action=prev_action,
             step_count=step_count,
