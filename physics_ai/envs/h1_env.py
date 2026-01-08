@@ -140,17 +140,21 @@ class UnitreeH1Env:
         scaled_action = action * self.config.action_scale
         ctrl = scaled_action
         
-        def physics_step(data, _):
-            data = data.replace(ctrl=ctrl)
-            data = mjx.step(self.mjx_model, data)
-            return data, None
+        def single_env_step(single_data, single_ctrl):
+            def physics_step(data, _):
+                data = data.replace(ctrl=single_ctrl)
+                data = mjx.step(self.mjx_model, data)
+                return data, None
+            
+            result, _ = jax.lax.scan(
+                physics_step,
+                single_data,
+                None,
+                length=self.config.control_decimation,
+            )
+            return result
         
-        mjx_data, _ = jax.lax.scan(
-            physics_step,
-            state.mjx_data,
-            None,
-            length=self.config.control_decimation,
-        )
+        mjx_data = jax.vmap(single_env_step)(state.mjx_data, ctrl)
         
         obs = self._compute_obs(mjx_data, state.command)
         
