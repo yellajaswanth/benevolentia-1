@@ -1,0 +1,116 @@
+# PhysicsAI: Unitree H1 Digital Twin
+
+GPU-accelerated digital twin simulation for the Unitree H1 humanoid using MuJoCo MJX with JAX-native PPO for sim-to-real transfer.
+
+## Features
+
+- **MuJoCo MJX**: Hardware-accelerated physics simulation with XLA support
+- **JAX-native PPO**: Custom Proximal Policy Optimization using Flax/Optax
+- **Domain Randomization**: Comprehensive sim-to-real robustness (friction, mass, terrain, forces)
+- **LocoMuJoCo Compatible**: Standardized interface for benchmarking
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.10, 3.11, or 3.12 (3.13 not yet supported)
+- **Apple Silicon Mac**: Requires ARM-native Python (see below)
+- **Linux with NVIDIA GPU**: CUDA 12+ recommended
+
+### 1. Install Dependencies
+
+#### Option A: Linux or Intel Mac
+
+```bash
+cd physics_ai
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+#### Option B: Apple Silicon Mac (M1/M2/M3)
+
+You need ARM-native Python. Install via Miniforge:
+
+```bash
+# Download ARM-native Miniforge
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh"
+chmod +x Miniforge3-MacOSX-arm64.sh
+./Miniforge3-MacOSX-arm64.sh -b -p ~/miniforge3
+
+# Initialize and create environment
+~/miniforge3/bin/conda init zsh  # or bash
+source ~/.zshrc
+conda create -n physics_ai python=3.12 -y
+conda activate physics_ai
+
+# Install the package
+cd physics_ai
+pip install -e .
+pip install jax-metal  # Optional: Metal GPU acceleration
+```
+
+#### Option C: NVIDIA GPU (CUDA)
+
+```bash
+pip install -e ".[cuda]"
+```
+
+### 2. Download Robot Assets
+
+```bash
+python scripts/download_assets.py
+```
+
+### 3. Train Walking Policy
+
+```bash
+python scripts/train.py --config configs/h1_walking.yaml
+```
+
+### 4. Evaluate
+
+```bash
+python scripts/evaluate.py --checkpoint checkpoints/latest.pkl
+```
+
+## Project Structure
+
+```
+physics_ai/
+├── configs/h1_walking.yaml     # Training hyperparameters
+├── physics_ai/
+│   ├── envs/                   # MJX environment + wrappers
+│   ├── agents/                 # PPO + Actor-Critic networks
+│   ├── rewards/                # Reward functions
+│   └── utils/                  # JAX utilities
+├── scripts/                    # Training and evaluation
+└── assets/                     # Robot MJCF (after download)
+```
+
+## Training Configuration
+
+Key parameters in `configs/h1_walking.yaml`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_envs` | 4096 | Parallel environments |
+| `rollout_length` | 64 | Steps per rollout |
+| `learning_rate` | 3e-4 | PPO learning rate |
+| `clip_ratio` | 0.2 | PPO clipping |
+
+## Domain Randomization
+
+| Category | Parameter | Range |
+|----------|-----------|-------|
+| Physics | Friction | [0.2, 1.0] |
+| Mass | Link mass | ±10% |
+| Actuator | Motor strength | ±15% |
+| External | Push forces | 0-50N |
+
+## Requirements
+
+- Python 3.10+
+- NVIDIA GPU with CUDA 12+ (recommended)
+- MuJoCo 3.1+
+

@@ -1,0 +1,108 @@
+env:
+  num_envs: 4096
+  episode_length: 1000
+  dt: 0.005
+  control_decimation: 4
+  
+robot:
+  asset_path: "assets/unitree_h1/h1.xml"
+  num_actions: 19
+  default_joint_angles:
+    left_hip_yaw: 0.0
+    left_hip_roll: 0.0
+    left_hip_pitch: -0.4
+    left_knee: 0.8
+    left_ankle: -0.4
+    right_hip_yaw: 0.0
+    right_hip_roll: 0.0
+    right_hip_pitch: -0.4
+    right_knee: 0.8
+    right_ankle: -0.4
+    torso: 0.0
+    left_shoulder_pitch: 0.0
+    left_shoulder_roll: 0.0
+    left_shoulder_yaw: 0.0
+    left_elbow: 0.0
+    right_shoulder_pitch: 0.0
+    right_shoulder_roll: 0.0
+    right_shoulder_yaw: 0.0
+    right_elbow: 0.0
+
+observation:
+  joint_pos: true
+  joint_vel: true
+  base_quat: true
+  base_ang_vel: true
+  command_vel: true
+  projected_gravity: true
+
+commands:
+  vx_range: [-1.0, 1.0]
+  vy_range: [-0.5, 0.5]
+  vyaw_range: [-1.0, 1.0]
+  resample_time: 10.0
+
+rewards:
+  velocity_tracking:
+    weight: 1.0
+    exp_scale: 0.25
+  yaw_rate_tracking:
+    weight: 0.5
+    exp_scale: 0.25
+  upright:
+    weight: 0.2
+  height:
+    weight: 0.1
+    target_height: 0.98
+  energy:
+    weight: -0.001
+  smoothness:
+    weight: -0.01
+  alive:
+    weight: 1.0
+  termination:
+    weight: -10.0
+
+termination:
+  max_pitch: 0.5
+  max_roll: 0.5
+  min_height: 0.3
+
+domain_randomization:
+  friction:
+    enabled: true
+    range: [0.2, 1.0]
+  mass:
+    enabled: true
+    scale_range: [0.9, 1.1]
+  motor_strength:
+    enabled: true
+    scale_range: [0.85, 1.15]
+  push_force:
+    enabled: true
+    magnitude_range: [0.0, 50.0]
+    interval: [5.0, 15.0]
+  latency:
+    enabled: true
+    range_ms: [0, 20]
+
+ppo:
+  learning_rate: 3.0e-4
+  clip_ratio: 0.2
+  gamma: 0.99
+  gae_lambda: 0.95
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 1.0
+  num_epochs: 4
+  num_minibatches: 4
+  normalize_advantages: true
+
+training:
+  total_timesteps: 1_000_000_000
+  rollout_length: 64
+  eval_interval: 100
+  save_interval: 500
+  log_interval: 10
+  seed: 42
+
