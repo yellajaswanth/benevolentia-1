@@ -42,11 +42,13 @@ class PPOAgent:
         config: PPOConfig | None = None,
         hidden_dims: tuple[int, ...] = (256, 256),
         rng: jax.Array | None = None,
+        lr_schedule: optax.Schedule | None = None,
     ):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.config = config or PPOConfig()
         self.hidden_dims = hidden_dims
+        self.lr_schedule = lr_schedule
         
         if rng is None:
             rng = jax.random.PRNGKey(0)
@@ -64,13 +66,18 @@ class PPOAgent:
         actor_params = self.actor.init(actor_key, dummy_obs)
         critic_params = self.critic.init(critic_key, dummy_obs)
         
+        if self.lr_schedule is not None:
+            lr = self.lr_schedule
+        else:
+            lr = self.config.learning_rate
+        
         actor_tx = optax.chain(
             optax.clip_by_global_norm(self.config.max_grad_norm),
-            optax.adam(self.config.learning_rate),
+            optax.adam(lr),
         )
         critic_tx = optax.chain(
             optax.clip_by_global_norm(self.config.max_grad_norm),
-            optax.adam(self.config.learning_rate),
+            optax.adam(lr),
         )
         
         actor_state = TrainState.create(
@@ -85,6 +92,12 @@ class PPOAgent:
         )
         
         return PPOState(actor_state=actor_state, critic_state=critic_state, rng=rng)
+    
+    def get_current_lr(self, state: PPOState) -> float:
+        if self.lr_schedule is not None:
+            step = state.actor_state.step
+            return float(self.lr_schedule(step))
+        return self.config.learning_rate
     
     @property
     def state(self) -> PPOState:

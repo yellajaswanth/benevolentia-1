@@ -12,6 +12,7 @@ from physics_ai.utils.jax_utils import quat_rotate_inverse
 
 @dataclass
 class RewardConfig:
+    reward_scaling: float = 0.1
     velocity_tracking_weight: float = 1.0
     velocity_tracking_scale: float = 0.25
     yaw_rate_weight: float = 0.5
@@ -80,7 +81,7 @@ def compute_reward(
         alive
     )
     
-    return total_reward
+    return total_reward * config.reward_scaling
 
 
 def _velocity_tracking_reward(

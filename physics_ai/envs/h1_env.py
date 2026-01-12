@@ -11,6 +11,7 @@ import mujoco
 from mujoco import mjx
 
 from physics_ai.utils.jax_utils import quat_rotate_inverse
+from physics_ai.rewards.walking import RewardConfig
 
 
 class EnvState(NamedTuple):
@@ -46,8 +47,10 @@ class UnitreeH1Env:
         self,
         config: EnvConfig | None = None,
         asset_path: str | Path | None = None,
+        reward_config: RewardConfig | None = None,
     ):
         self.config = config or EnvConfig()
+        self.reward_config = reward_config or RewardConfig()
         
         if asset_path is None:
             asset_path = Path(__file__).parent.parent.parent / "assets" / "unitree_h1" / "h1.xml"
@@ -166,6 +169,7 @@ class UnitreeH1Env:
             command=state.command,
             joint_qpos_indices=jnp.array(self.joint_qpos_indices),
             joint_qvel_indices=jnp.array(self.joint_qvel_indices),
+            config=self.reward_config,
         )
         
         done = self._compute_termination(mjx_data)

@@ -1,5 +1,5 @@
 env:
-  num_envs: 4096
+  num_envs: 8192
   episode_length: 1000
   dt: 0.005
   control_decimation: 4
@@ -43,6 +43,7 @@ commands:
   resample_time: 10.0
 
 rewards:
+  reward_scaling: 0.1
   velocity_tracking:
     weight: 1.0
     exp_scale: 0.25
@@ -87,22 +88,31 @@ domain_randomization:
     range_ms: [0, 20]
 
 ppo:
-  learning_rate: 3.0e-4
+  learning_rate: 1.0e-4
   clip_ratio: 0.2
-  gamma: 0.99
+  gamma: 0.98
   gae_lambda: 0.95
-  entropy_coef: 0.01
+  entropy_coef: 0.0
   value_coef: 0.5
   max_grad_norm: 1.0
-  num_epochs: 4
-  num_minibatches: 4
+  num_epochs: 5
+  num_minibatches: 8
   normalize_advantages: true
 
 training:
-  total_timesteps: 1_000_000_000
-  rollout_length: 64
+  total_timesteps: 400_000_000
+  rollout_length: 32
   eval_interval: 100
-  save_interval: 500
+  save_interval: 50
   log_interval: 10
   seed: 42
+  # Learning rate schedule
+  lr_schedule: "cosine"
+  warmup_ratio: 0.05
+  min_lr_ratio: 0.1
+  # Early stopping
+  early_stopping: true
+  patience: 100
+  min_improvement: 0.005
+  reward_window: 50
 
