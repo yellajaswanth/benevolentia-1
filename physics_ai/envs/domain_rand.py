@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import flax.struct
 import jax
 import jax.numpy as jnp
 from mujoco import mjx
@@ -33,7 +34,7 @@ class DomainRandomizationConfig:
     gravity_noise_range: tuple[float, float] = (-0.1, 0.1)
 
 
-@dataclass
+@flax.struct.dataclass
 class RandomizedParams:
     friction_scale: jnp.ndarray | None = None
     mass_scale: jnp.ndarray | None = None
