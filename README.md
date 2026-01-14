@@ -134,6 +134,11 @@ Brax PPO provides significantly faster and more stable training:
 python scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir checkpoints
 ```
 
+To run in background
+```bash
+nohup python -u scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir checkpoints > training.log 2>&1 &
+```
+
 **Expected Performance:**
 - FPS: 50,000 - 500,000 (vs ~1,000 with custom PPO)
 - Training time: 15-45 minutes for 400M steps

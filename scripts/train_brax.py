@@ -170,11 +170,6 @@ def train(
             f"Time: {elapsed/60:6.1f}min"
         )
         
-        if len(eval_steps) % 10 == 0:
-            checkpoint_path = os.path.join(
-                checkpoint_dir,
-                f"checkpoint_{num_steps:012d}.pkl"
-            )
     
     print("\nStarting training...")
     print("-" * 60)
