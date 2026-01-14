@@ -88,15 +88,15 @@ domain_randomization:
     range_ms: [0, 20]
 
 ppo:
-  learning_rate: 3.0e-4
+  learning_rate: 5.0e-5
   clip_ratio: 0.2
   gamma: 0.99
   gae_lambda: 0.95
-  entropy_coef: 0.01
+  entropy_coef: 0.005
   value_coef: 0.5
   max_grad_norm: 0.5
-  num_epochs: 4
-  num_minibatches: 4
+  num_epochs: 2
+  num_minibatches: 8
   normalize_advantages: true
   target_kl: 0.02
 

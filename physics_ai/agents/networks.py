@@ -27,7 +27,7 @@ class ActorCritic(nn.Module):
         
         log_std = self.param(
             "log_std",
-            nn.initializers.constant(-0.5),
+            nn.initializers.constant(-1.0),
             (self.action_dim,),
         )
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
@@ -115,7 +115,7 @@ class Actor(nn.Module):
         
         log_std = self.param(
             "log_std",
-            nn.initializers.constant(-0.5),
+            nn.initializers.constant(-1.0),
             (self.action_dim,),
         )
         log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
