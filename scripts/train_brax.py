@@ -12,7 +12,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import yaml
-from brax.training.agents.ppo import train as ppo_train
+from brax.training.agents.ppo.train import train as ppo_train
 from brax.training.agents.ppo import networks as ppo_networks
 
 from physics_ai.envs.brax_wrapper import BraxH1EnvWrapper, create_brax_h1_env
