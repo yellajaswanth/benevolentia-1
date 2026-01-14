@@ -175,7 +175,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             "prev_action": action,
             "step_count": step_count,
             "rng": rng,
-            "truncation": jnp.float32(truncated),
+            "truncation": jnp.where(truncated, 1.0, 0.0),
         }
         
         return BraxState(
