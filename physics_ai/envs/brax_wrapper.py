@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 import functools
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import flax.struct
 import jax
 import jax.numpy as jnp
 from brax.envs import base as brax_base
+import mujoco
 from mujoco import mjx
 
-from physics_ai.envs.h1_env import UnitreeH1Env, EnvConfig, EnvState
-from physics_ai.envs.domain_rand import (
-    DomainRandomizer,
-    DomainRandomizationConfig,
-    RandomizedParams,
-)
+from physics_ai.envs.h1_env import EnvConfig
+from physics_ai.envs.domain_rand import DomainRandomizationConfig
 from physics_ai.rewards.walking import RewardConfig
+from physics_ai.utils.jax_utils import quat_rotate_inverse
 
 
 @flax.struct.dataclass
@@ -34,109 +32,120 @@ class BraxH1EnvWrapper(brax_base.Env):
         env_config: EnvConfig | None = None,
         reward_config: RewardConfig | None = None,
         dr_config: DomainRandomizationConfig | None = None,
+        asset_path: str | None = None,
     ):
         self._env_config = env_config or EnvConfig()
         self._reward_config = reward_config or RewardConfig()
         self._dr_config = dr_config
         
-        self._h1_env = UnitreeH1Env(
-            config=self._env_config,
-            reward_config=self._reward_config,
-        )
+        if asset_path is None:
+            from pathlib import Path
+            asset_path = Path(__file__).parent.parent.parent / "assets" / "unitree_h1" / "h1.xml"
         
-        self._domain_randomizer = None
-        if dr_config is not None:
-            self._domain_randomizer = DomainRandomizer(
-                config=dr_config,
-                num_envs=self._env_config.num_envs,
-            )
+        self._mj_model = mujoco.MjModel.from_xml_path(str(asset_path))
+        self._mj_model.opt.timestep = self._env_config.dt
+        self._mjx_model = mjx.put_model(self._mj_model)
+        
+        self._setup_indices()
+        self._default_qpos = jnp.array(self._mj_model.qpos0)
+
+    def _setup_indices(self) -> None:
+        self._joint_qpos_indices = []
+        self._joint_qvel_indices = []
+        
+        for i in range(self._mj_model.njnt):
+            jnt_type = self._mj_model.jnt_type[i]
+            if jnt_type == mujoco.mjtJoint.mjJNT_HINGE:
+                qpos_adr = self._mj_model.jnt_qposadr[i]
+                qvel_adr = self._mj_model.jnt_dofadr[i]
+                self._joint_qpos_indices.append(qpos_adr)
+                self._joint_qvel_indices.append(qvel_adr)
+        
+        self._num_actions = self._mj_model.nu
+        self._obs_dim = self._compute_obs_dim()
+
+    def _compute_obs_dim(self) -> int:
+        num_joints = len(self._joint_qpos_indices)
+        return (
+            num_joints +  # joint positions
+            num_joints +  # joint velocities
+            4 +           # base quaternion
+            3 +           # base angular velocity
+            3 +           # command velocity
+            3             # projected gravity
+        )
 
     @property
     def observation_size(self) -> int:
-        return self._h1_env.obs_dim
+        return self._obs_dim
 
     @property
     def action_size(self) -> int:
-        return self._h1_env.num_actions
+        return self._num_actions
 
     @property
     def backend(self) -> str:
         return "mjx"
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def reset(self, rng: jax.Array) -> BraxState:
-        rng, env_key, dr_key = jax.random.split(rng, 3)
+        rng, cmd_key = jax.random.split(rng)
         
-        env_state = self._h1_env.reset(env_key)
+        data = mjx.make_data(self._mjx_model)
+        qpos = self._default_qpos.at[2].set(1.0)
+        data = data.replace(qpos=qpos, qvel=jnp.zeros_like(data.qvel))
+        data = mjx.forward(self._mjx_model, data)
         
-        dr_params = None
-        if self._domain_randomizer is not None:
-            dr_params = self._domain_randomizer.sample(dr_key)
+        command = self._sample_command(cmd_key)
+        
+        obs = self._compute_obs(data, command)
         
         metrics = {
-            "episode_reward": jnp.zeros(self._env_config.num_envs),
-            "episode_length": jnp.zeros(self._env_config.num_envs),
+            "episode_reward": jnp.array(0.0),
+            "episode_length": jnp.array(0.0),
         }
         
         info = {
-            "command": env_state.command,
-            "prev_action": env_state.prev_action,
-            "step_count": env_state.step_count,
-            "rng": env_state.rng,
-            "dr_params": dr_params,
-            "truncation": jnp.zeros(self._env_config.num_envs, dtype=jnp.bool_),
+            "command": command,
+            "prev_action": jnp.zeros(self._num_actions),
+            "step_count": jnp.array(0, dtype=jnp.int32),
+            "rng": rng,
+            "truncation": jnp.array(False),
         }
         
         return BraxState(
-            pipeline_state=env_state.mjx_data,
-            obs=env_state.obs,
-            reward=env_state.reward,
-            done=env_state.done,
+            pipeline_state=data,
+            obs=obs,
+            reward=jnp.array(0.0),
+            done=jnp.array(False),
             metrics=metrics,
             info=info,
         )
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def step(self, state: BraxState, action: jnp.ndarray) -> BraxState:
         rng = state.info["rng"]
-        rng, step_key, cmd_key, reset_key, dr_key = jax.random.split(rng, 5)
+        rng, cmd_key, reset_key = jax.random.split(rng, 3)
         
-        dr_params = state.info.get("dr_params")
-        scaled_action = action
-        if dr_params is not None and dr_params.motor_strength_scale is not None:
-            scaled_action = DomainRandomizer.apply_motor_strength(
-                action, dr_params.motor_strength_scale
-            )
+        scaled_action = action * self._env_config.action_scale
         
-        scaled_action = scaled_action * self._env_config.action_scale
+        def physics_step(data, _):
+            data = data.replace(ctrl=scaled_action)
+            data = mjx.step(self._mjx_model, data)
+            return data, None
         
-        def single_env_step(single_data, single_ctrl):
-            def physics_step(data, _):
-                data = data.replace(ctrl=single_ctrl)
-                data = mjx.step(self._h1_env.mjx_model, data)
-                return data, None
-            
-            result, _ = jax.lax.scan(
-                physics_step,
-                single_data,
-                None,
-                length=self._env_config.control_decimation,
-            )
-            return result
-        
-        mjx_data = jax.vmap(single_env_step)(state.pipeline_state, scaled_action)
+        mjx_data, _ = jax.lax.scan(
+            physics_step,
+            state.pipeline_state,
+            None,
+            length=self._env_config.control_decimation,
+        )
         
         obs = self._compute_obs(mjx_data, state.info["command"])
         
-        from physics_ai.rewards.walking import compute_reward
-        reward = compute_reward(
+        reward = self._compute_reward(
             mjx_data=mjx_data,
             action=action,
             prev_action=state.info["prev_action"],
             command=state.info["command"],
-            joint_qpos_indices=jnp.array(self._h1_env.joint_qpos_indices),
-            joint_qvel_indices=jnp.array(self._h1_env.joint_qvel_indices),
-            config=self._reward_config,
         )
         
         done = self._compute_termination(mjx_data)
@@ -151,25 +160,39 @@ class BraxH1EnvWrapper(brax_base.Env):
         )
         should_resample = (step_count % resample_interval) == 0
         new_command = jax.lax.cond(
-            jnp.any(should_resample),
-            lambda: jnp.where(
-                should_resample[:, None],
-                self._sample_commands(cmd_key),
-                state.info["command"],
-            ),
+            should_resample,
+            lambda: self._sample_command(cmd_key),
             lambda: state.info["command"],
         )
         
-        reset_keys = jax.random.split(reset_key, self._env_config.num_envs)
-        mjx_data, obs, new_command, step_count, new_dr_params = self._reset_done_envs(
-            mjx_data, obs, new_command, step_count, done, reset_keys, dr_key
+        reset_state = self.reset(reset_key)
+        
+        mjx_data = jax.lax.cond(
+            done,
+            lambda: reset_state.pipeline_state,
+            lambda: mjx_data,
+        )
+        obs = jax.lax.cond(
+            done,
+            lambda: reset_state.obs,
+            lambda: obs,
+        )
+        new_command = jax.lax.cond(
+            done,
+            lambda: reset_state.info["command"],
+            lambda: new_command,
+        )
+        step_count = jax.lax.cond(
+            done,
+            lambda: jnp.array(0, dtype=jnp.int32),
+            lambda: step_count,
         )
         
         episode_reward = state.metrics["episode_reward"] + reward
         episode_length = state.metrics["episode_length"] + 1
         
-        episode_reward = jnp.where(done, jnp.zeros_like(episode_reward), episode_reward)
-        episode_length = jnp.where(done, jnp.zeros_like(episode_length), episode_length)
+        episode_reward = jax.lax.cond(done, lambda: jnp.array(0.0), lambda: episode_reward)
+        episode_length = jax.lax.cond(done, lambda: jnp.array(0.0), lambda: episode_length)
         
         metrics = {
             "episode_reward": episode_reward,
@@ -179,9 +202,8 @@ class BraxH1EnvWrapper(brax_base.Env):
         info = {
             "command": new_command,
             "prev_action": action,
-            "step_count": jnp.where(done, jnp.zeros_like(step_count), step_count),
+            "step_count": step_count,
             "rng": rng,
-            "dr_params": new_dr_params if new_dr_params is not None else dr_params,
             "truncation": truncated,
         }
         
@@ -195,21 +217,17 @@ class BraxH1EnvWrapper(brax_base.Env):
         )
 
     def _compute_obs(self, mjx_data: mjx.Data, command: jnp.ndarray) -> jnp.ndarray:
-        from physics_ai.utils.jax_utils import quat_rotate_inverse
-        
         qpos = mjx_data.qpos
         qvel = mjx_data.qvel
         
-        joint_pos = qpos[:, jnp.array(self._h1_env.joint_qpos_indices)]
-        joint_vel = qvel[:, jnp.array(self._h1_env.joint_qvel_indices)]
+        joint_pos = qpos[jnp.array(self._joint_qpos_indices)]
+        joint_vel = qvel[jnp.array(self._joint_qvel_indices)]
         
-        base_quat = qpos[:, 3:7]
-        base_ang_vel = qvel[:, 3:6]
+        base_quat = qpos[3:7]
+        base_ang_vel = qvel[3:6]
         
         gravity_world = jnp.array([0.0, 0.0, -1.0])
-        projected_gravity = jax.vmap(quat_rotate_inverse)(
-            base_quat, jnp.tile(gravity_world, (qpos.shape[0], 1))
-        )
+        projected_gravity = quat_rotate_inverse(base_quat, gravity_world)
         
         obs = jnp.concatenate([
             joint_pos,
@@ -218,92 +236,96 @@ class BraxH1EnvWrapper(brax_base.Env):
             base_ang_vel,
             command,
             projected_gravity,
-        ], axis=-1)
+        ])
         
         return obs
 
-    def _sample_commands(self, rng: jax.Array) -> jnp.ndarray:
+    def _sample_command(self, rng: jax.Array) -> jnp.ndarray:
         rng, *keys = jax.random.split(rng, 4)
         
         vx = jax.random.uniform(
-            keys[0], (self._env_config.num_envs,),
+            keys[0], (),
             minval=self._env_config.vx_range[0],
             maxval=self._env_config.vx_range[1],
         )
         vy = jax.random.uniform(
-            keys[1], (self._env_config.num_envs,),
+            keys[1], (),
             minval=self._env_config.vy_range[0],
             maxval=self._env_config.vy_range[1],
         )
         vyaw = jax.random.uniform(
-            keys[2], (self._env_config.num_envs,),
+            keys[2], (),
             minval=self._env_config.vyaw_range[0],
             maxval=self._env_config.vyaw_range[1],
         )
         
-        return jnp.stack([vx, vy, vyaw], axis=-1)
+        return jnp.stack([vx, vy, vyaw])
 
     def _compute_termination(self, mjx_data: mjx.Data) -> jnp.ndarray:
-        from physics_ai.utils.jax_utils import quat_rotate_inverse
-        
         qpos = mjx_data.qpos
         
-        base_height = qpos[:, 2]
-        base_quat = qpos[:, 3:7]
+        base_height = qpos[2]
+        base_quat = qpos[3:7]
         
         gravity_world = jnp.array([0.0, 0.0, -1.0])
-        projected_gravity = jax.vmap(quat_rotate_inverse)(
-            base_quat, jnp.tile(gravity_world, (qpos.shape[0], 1))
-        )
+        projected_gravity = quat_rotate_inverse(base_quat, gravity_world)
         
-        pitch = jnp.arcsin(-projected_gravity[:, 0])
-        roll = jnp.arctan2(projected_gravity[:, 1], projected_gravity[:, 2])
+        pitch = jnp.arcsin(-projected_gravity[0])
+        roll = jnp.arctan2(projected_gravity[1], projected_gravity[2])
         
         fallen = base_height < 0.3
         tilted = (jnp.abs(pitch) > 0.5) | (jnp.abs(roll) > 0.5)
         
         return fallen | tilted
 
-    def _reset_done_envs(
+    def _compute_reward(
         self,
         mjx_data: mjx.Data,
-        obs: jnp.ndarray,
+        action: jnp.ndarray,
+        prev_action: jnp.ndarray,
         command: jnp.ndarray,
-        step_count: jnp.ndarray,
-        done: jnp.ndarray,
-        reset_keys: jax.Array,
-        dr_key: jax.Array,
-    ) -> Tuple[mjx.Data, jnp.ndarray, jnp.ndarray, jnp.ndarray, RandomizedParams | None]:
-        def reset_single(key):
-            data = mjx.make_data(self._h1_env.mjx_model)
-            qpos = self._h1_env._default_qpos.at[2].set(1.0)
-            data = data.replace(qpos=qpos, qvel=jnp.zeros_like(data.qvel))
-            data = mjx.forward(self._h1_env.mjx_model, data)
-            return data
+    ) -> jnp.ndarray:
+        qpos = mjx_data.qpos
+        qvel = mjx_data.qvel
         
-        reset_data = jax.vmap(reset_single)(reset_keys)
+        base_pos = qpos[:3]
+        base_quat = qpos[3:7]
+        base_lin_vel = qvel[:3]
+        base_ang_vel = qvel[3:6]
         
-        def select(reset_val, current_val, done_mask):
-            return jnp.where(
-                done_mask.reshape(-1, *([1] * (reset_val.ndim - 1))),
-                reset_val,
-                current_val,
-            )
+        base_lin_vel_local = quat_rotate_inverse(base_quat, base_lin_vel)
+        base_ang_vel_local = quat_rotate_inverse(base_quat, base_ang_vel)
         
-        mjx_data = jax.tree.map(lambda r, c: select(r, c, done), reset_data, mjx_data)
+        vel_error = jnp.sum((base_lin_vel_local[:2] - command[:2]) ** 2)
+        vel_tracking = jnp.exp(-vel_error / self._reward_config.velocity_tracking_scale)
         
-        reset_commands = self._sample_commands(reset_keys[0])
-        command = jnp.where(done[:, None], reset_commands, command)
+        yaw_error = (base_ang_vel_local[2] - command[2]) ** 2
+        yaw_tracking = jnp.exp(-yaw_error / self._reward_config.yaw_rate_scale)
         
-        obs = self._compute_obs(mjx_data, command)
-        step_count = jnp.where(done, jnp.zeros_like(step_count), step_count)
+        gravity_world = jnp.array([0.0, 0.0, -1.0])
+        projected_gravity = quat_rotate_inverse(base_quat, gravity_world)
+        upright = projected_gravity[2]
         
-        new_dr_params = None
-        if self._domain_randomizer is not None:
-            new_dr_params = self._domain_randomizer.sample(dr_key)
-            old_dr_params = None
+        height_error = jnp.abs(base_pos[2] - self._reward_config.target_height)
+        height = jnp.exp(-height_error * 10.0)
         
-        return mjx_data, obs, command, step_count, new_dr_params
+        energy = jnp.sum(action ** 2)
+        
+        smoothness = jnp.sum((action - prev_action) ** 2)
+        
+        alive = self._reward_config.alive_bonus
+        
+        total_reward = (
+            self._reward_config.velocity_tracking_weight * vel_tracking +
+            self._reward_config.yaw_rate_weight * yaw_tracking +
+            self._reward_config.upright_weight * upright +
+            self._reward_config.height_weight * height +
+            self._reward_config.energy_weight * energy +
+            self._reward_config.smoothness_weight * smoothness +
+            alive
+        )
+        
+        return total_reward * self._reward_config.reward_scaling
 
 
 def create_brax_h1_env(
