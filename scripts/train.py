@@ -134,10 +134,11 @@ def load_config(config_path: str) -> tuple[EnvConfig, PPOConfig, DomainRandomiza
         gae_lambda=ppo_cfg.get("gae_lambda", 0.95),
         entropy_coef=ppo_cfg.get("entropy_coef", 0.01),
         value_coef=ppo_cfg.get("value_coef", 0.5),
-        max_grad_norm=ppo_cfg.get("max_grad_norm", 1.0),
+        max_grad_norm=ppo_cfg.get("max_grad_norm", 0.5),
         num_epochs=ppo_cfg.get("num_epochs", 4),
         num_minibatches=ppo_cfg.get("num_minibatches", 4),
         normalize_advantages=ppo_cfg.get("normalize_advantages", True),
+        target_kl=ppo_cfg.get("target_kl", 0.02),
     )
     
     dr_cfg = cfg.get("domain_randomization", {})
