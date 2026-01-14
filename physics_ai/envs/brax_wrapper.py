@@ -123,7 +123,7 @@ class BraxH1EnvWrapper(brax_base.Env):
 
     def step(self, state: BraxState, action: jnp.ndarray) -> BraxState:
         rng = state.info["rng"]
-        rng, cmd_key, reset_key = jax.random.split(rng, 3)
+        rng, cmd_key = jax.random.split(rng, 2)
         
         scaled_action = action * self._env_config.action_scale
         
@@ -159,45 +159,14 @@ class BraxH1EnvWrapper(brax_base.Env):
             (self._env_config.dt * self._env_config.control_decimation)
         )
         should_resample = (step_count % resample_interval) == 0
-        new_command = jax.lax.cond(
+        new_command = jnp.where(
             should_resample,
-            lambda: self._sample_command(cmd_key),
-            lambda: state.info["command"],
+            self._sample_command(cmd_key),
+            state.info["command"],
         )
-        
-        reset_state = self.reset(reset_key)
-        
-        mjx_data = jax.lax.cond(
-            done,
-            lambda: reset_state.pipeline_state,
-            lambda: mjx_data,
-        )
-        obs = jax.lax.cond(
-            done,
-            lambda: reset_state.obs,
-            lambda: obs,
-        )
-        new_command = jax.lax.cond(
-            done,
-            lambda: reset_state.info["command"],
-            lambda: new_command,
-        )
-        step_count = jax.lax.cond(
-            done,
-            lambda: jnp.array(0, dtype=jnp.int32),
-            lambda: step_count,
-        )
-        
-        episode_reward = state.metrics.get("episode_reward", jnp.array(0.0)) + reward
-        episode_length = state.metrics.get("episode_length", jnp.array(0.0)) + 1
-        
-        episode_reward = jax.lax.cond(done, lambda: jnp.array(0.0), lambda: episode_reward)
-        episode_length = jax.lax.cond(done, lambda: jnp.array(0.0), lambda: episode_length)
         
         metrics = {
             **state.metrics,
-            "episode_reward": episode_reward,
-            "episode_length": episode_length,
         }
         
         info = {
@@ -206,7 +175,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             "prev_action": action,
             "step_count": step_count,
             "rng": rng,
-            "truncation": truncated.astype(jnp.float32),
+            "truncation": jnp.float32(truncated),
         }
         
         return BraxState(
