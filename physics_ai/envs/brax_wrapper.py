@@ -116,7 +116,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             pipeline_state=data,
             obs=obs,
             reward=jnp.array(0.0),
-            done=jnp.array(False),
+            done=jnp.array(0.0),
             metrics=metrics,
             info=info,
         )
@@ -182,7 +182,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             pipeline_state=mjx_data,
             obs=obs,
             reward=reward,
-            done=done,
+            done=jnp.where(done, 1.0, 0.0),
             metrics=metrics,
             info=info,
         )
