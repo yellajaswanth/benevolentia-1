@@ -69,6 +69,10 @@ class EarlyStopping:
         
         current_mean = sum(self.reward_history) / len(self.reward_history)
         
+        if self.best_mean_reward == float("-inf"):
+            self.best_mean_reward = current_mean
+            return False
+        
         improvement = (current_mean - self.best_mean_reward) / (abs(self.best_mean_reward) + 1e-8)
         
         if improvement > self.min_improvement:

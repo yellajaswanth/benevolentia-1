@@ -1,3 +1,6 @@
 *.sh
 *.pyc
-
+.venv
+examples
+checkpoints/2026-01-12
+__pycache__

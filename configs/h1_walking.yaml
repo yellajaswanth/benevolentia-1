@@ -105,6 +105,7 @@ training:
   eval_interval: 100
   save_interval: 50
   log_interval: 10
+  num_evals: 100
   seed: 42
   # Learning rate schedule
   lr_schedule: "cosine"
@@ -115,4 +116,17 @@ training:
   patience: 100
   min_improvement: 0.005
   reward_window: 50
+
+# Brax PPO configuration (used by train_brax.py)
+brax_ppo:
+  learning_rate: 3.0e-4
+  entropy_cost: 0.001
+  discounting: 0.99
+  unroll_length: 32
+  num_minibatches: 32
+  num_updates_per_batch: 4
+  normalize_observations: true
+  reward_scaling: 1.0
+  clipping_epsilon: 0.2
+  gae_lambda: 0.95
 

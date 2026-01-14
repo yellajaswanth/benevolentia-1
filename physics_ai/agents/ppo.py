@@ -107,7 +107,7 @@ class PPOAgent:
     def state(self, value: PPOState):
         self._state = value
     
-    @functools.partial(jax.jit, static_argnums=(0,))
+    @functools.partial(jax.jit, static_argnums=(0, 3))
     def get_action(
         self,
         state: PPOState,
