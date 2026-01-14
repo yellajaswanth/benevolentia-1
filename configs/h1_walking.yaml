@@ -1,5 +1,5 @@
 env:
-  num_envs: 8192
+  num_envs: 2048
   episode_length: 1000
   dt: 0.005
   control_decimation: 4
