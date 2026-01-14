@@ -109,7 +109,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             "prev_action": jnp.zeros(self._num_actions),
             "step_count": jnp.array(0, dtype=jnp.int32),
             "rng": rng,
-            "truncation": jnp.array(False),
+            "truncation": jnp.array(0.0),
         }
         
         return BraxState(
@@ -206,7 +206,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             "prev_action": action,
             "step_count": step_count,
             "rng": rng,
-            "truncation": truncated,
+            "truncation": truncated.astype(jnp.float32),
         }
         
         return BraxState(
