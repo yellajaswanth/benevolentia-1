@@ -188,18 +188,20 @@ class BraxH1EnvWrapper(brax_base.Env):
             lambda: step_count,
         )
         
-        episode_reward = state.metrics["episode_reward"] + reward
-        episode_length = state.metrics["episode_length"] + 1
+        episode_reward = state.metrics.get("episode_reward", jnp.array(0.0)) + reward
+        episode_length = state.metrics.get("episode_length", jnp.array(0.0)) + 1
         
         episode_reward = jax.lax.cond(done, lambda: jnp.array(0.0), lambda: episode_reward)
         episode_length = jax.lax.cond(done, lambda: jnp.array(0.0), lambda: episode_length)
         
         metrics = {
+            **state.metrics,
             "episode_reward": episode_reward,
             "episode_length": episode_length,
         }
         
         info = {
+            **state.info,
             "command": new_command,
             "prev_action": action,
             "step_count": step_count,
