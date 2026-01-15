@@ -32,7 +32,7 @@ class EnvConfig:
     episode_length: int = 1000
     dt: float = 0.005
     control_decimation: int = 4
-    action_scale: float = 0.5
+    action_scale: float = 50.0
     
     default_joint_angles: dict[str, float] | None = None
     
