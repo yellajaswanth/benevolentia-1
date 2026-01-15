@@ -37,19 +37,19 @@ observation:
   projected_gravity: true
 
 commands:
-  vx_range: [-1.0, 1.0]
-  vy_range: [-0.5, 0.5]
-  vyaw_range: [-1.0, 1.0]
+  vx_range: [0.0, 0.5]
+  vy_range: [-0.2, 0.2]
+  vyaw_range: [-0.3, 0.3]
   resample_time: 10.0
 
 rewards:
-  reward_scaling: 0.1
+  reward_scaling: 1.0
   velocity_tracking:
-    weight: 1.0
-    exp_scale: 0.25
+    weight: 2.0
+    exp_scale: 2.0
   yaw_rate_tracking:
     weight: 0.5
-    exp_scale: 0.25
+    exp_scale: 1.0
   upright:
     weight: 0.2
   height:
