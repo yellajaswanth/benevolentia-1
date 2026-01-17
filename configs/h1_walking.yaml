@@ -1,5 +1,5 @@
 env:
-  num_envs: 2048
+  num_envs: 8192
   episode_length: 1000
   dt: 0.005
   control_decimation: 4
@@ -80,25 +80,25 @@ domain_randomization:
     enabled: true
     scale_range: [0.85, 1.15]
   push_force:
-    enabled: true
+    enabled: false
     magnitude_range: [0.0, 50.0]
     interval: [5.0, 15.0]
   latency:
-    enabled: true
+    enabled: false
     range_ms: [0, 20]
 
 ppo:
-  learning_rate: 5.0e-5
+  learning_rate: 3.0e-4
   clip_ratio: 0.2
   gamma: 0.99
   gae_lambda: 0.95
-  entropy_coef: 0.005
+  entropy_coef: 0.02
   value_coef: 0.5
   max_grad_norm: 0.5
-  num_epochs: 2
+  num_epochs: 4
   num_minibatches: 8
   normalize_advantages: true
-  target_kl: 0.02
+  target_kl: 0.05
 
 training:
   total_timesteps: 50_000_000
@@ -113,9 +113,9 @@ training:
   warmup_ratio: 0.05
   min_lr_ratio: 0.1
   # Early stopping
-  early_stopping: true
-  patience: 100
-  min_improvement: 0.005
+  early_stopping: false
+  patience: 200
+  min_improvement: 0.001
   reward_window: 50
 
 # Brax PPO configuration (used by train_brax.py)
