@@ -1,0 +1,81 @@
+nohup: ignoring input
+Failed to import warp: No module named 'warp'
+Failed to import mujoco_warp: No module named 'warp'
+Initializing environment...
+Creating learning rate schedule...
+Initializing PPO agent...
+Initializing domain randomizer...
+Initializing early stopping...
+Resetting environment...
+
+Training Configuration:
+  Total timesteps: 50,000,000
+  Num environments: 2048
+  Rollout length: 16
+  Timesteps per update: 32,768
+  Total updates: 1,525
+  LR schedule: cosine
+  Early stopping: True
+    Patience: 100
+    Min improvement: 0.005
+
+Starting training...
+Update      0 | Timesteps:       32,768 | FPS:      260 | Reward:   3.170 | LR: 6.56e-07 | Entropy:   7.960 | KL:  1.1228
+Update     10 | Timesteps:      360,448 | FPS:      589 | Reward:   3.170 | LR: 7.21e-06 | Entropy:   7.953 | KL:  2.2961
+Update     20 | Timesteps:      688,128 | FPS:      627 | Reward:   3.169 | LR: 1.38e-05 | Entropy:   7.937 | KL:  2.3084
+Update     30 | Timesteps:    1,015,808 | FPS:      642 | Reward:   3.172 | LR: 2.03e-05 | Entropy:   7.909 | KL:  1.9531
+Update     40 | Timesteps:    1,343,488 | FPS:      650 | Reward:   3.176 | LR: 2.69e-05 | Entropy:   7.873 | KL:  0.7965
+Update     50 | Timesteps:    1,671,168 | FPS:      655 | Reward:   3.179 | LR: 3.34e-05 | Entropy:   7.825 | KL:  1.0622
+Saved checkpoint to checkpoints/checkpoint_000050.pkl
+Update     60 | Timesteps:    1,998,848 | FPS:      659 | Reward:   3.180 | LR: 4.00e-05 | Entropy:   7.765 | KL:  1.3235
+Update     70 | Timesteps:    2,326,528 | FPS:      661 | Reward:   3.183 | LR: 4.66e-05 | Entropy:   7.699 | KL:  0.6674
+Update     80 | Timesteps:    2,654,208 | FPS:      663 | Reward:   3.185 | LR: 5.00e-05 | Entropy:   7.610 | KL:  2.4686
+Update     90 | Timesteps:    2,981,888 | FPS:      665 | Reward:   3.187 | LR: 5.00e-05 | Entropy:   7.519 | KL:  0.6274
+Update    100 | Timesteps:    3,309,568 | FPS:      666 | Reward:   3.188 | LR: 5.00e-05 | Entropy:   7.422 | KL:  3.1574
+Saved checkpoint to checkpoints/checkpoint_000100.pkl
+Update    110 | Timesteps:    3,637,248 | FPS:      667 | Reward:   3.190 | LR: 4.99e-05 | Entropy:   7.325 | KL:  0.4927
+Update    120 | Timesteps:    3,964,928 | FPS:      668 | Reward:   3.193 | LR: 4.99e-05 | Entropy:   7.227 | KL:  2.0460
+Update    130 | Timesteps:    4,292,608 | FPS:      669 | Reward:   3.194 | LR: 4.98e-05 | Entropy:   7.133 | KL:  0.6621
+Update    140 | Timesteps:    4,620,288 | FPS:      669 | Reward:   3.196 | LR: 4.98e-05 | Entropy:   7.037 | KL:  1.0137
+Update    150 | Timesteps:    4,947,968 | FPS:      670 | Reward:   3.200 | LR: 4.97e-05 | Entropy:   6.932 | KL:  0.5614
+Saved checkpoint to checkpoints/checkpoint_000150.pkl
+Update    160 | Timesteps:    5,275,648 | FPS:      670 | Reward:   3.201 | LR: 4.96e-05 | Entropy:   6.833 | KL:  0.4619
+Update    170 | Timesteps:    5,603,328 | FPS:      671 | Reward:   3.202 | LR: 4.95e-05 | Entropy:   6.736 | KL:  0.6451
+Update    180 | Timesteps:    5,931,008 | FPS:      671 | Reward:   3.204 | LR: 4.94e-05 | Entropy:   6.644 | KL:  0.8991
+Update    190 | Timesteps:    6,258,688 | FPS:      671 | Reward:   3.205 | LR: 4.93e-05 | Entropy:   6.553 | KL:  0.4597
+Update    200 | Timesteps:    6,586,368 | FPS:      672 | Reward:   3.208 | LR: 4.92e-05 | Entropy:   6.456 | KL:  0.6150
+Saved checkpoint to checkpoints/checkpoint_000200.pkl
+Update    210 | Timesteps:    6,914,048 | FPS:      672 | Reward:   3.211 | LR: 4.90e-05 | Entropy:   6.363 | KL:  0.4943
+Update    220 | Timesteps:    7,241,728 | FPS:      672 | Reward:   3.213 | LR: 4.89e-05 | Entropy:   6.265 | KL:  0.4237
+Update    230 | Timesteps:    7,569,408 | FPS:      672 | Reward:   3.215 | LR: 4.87e-05 | Entropy:   6.179 | KL:  0.3730
+Update    240 | Timesteps:    7,897,088 | FPS:      672 | Reward:   3.215 | LR: 4.86e-05 | Entropy:   6.091 | KL:  1.3338
+Update    250 | Timesteps:    8,224,768 | FPS:      672 | Reward:   3.217 | LR: 4.84e-05 | Entropy:   5.999 | KL:  0.4072
+Saved checkpoint to checkpoints/checkpoint_000250.pkl
+Update    260 | Timesteps:    8,552,448 | FPS:      673 | Reward:   3.217 | LR: 4.82e-05 | Entropy:   5.907 | KL:  1.3950
+Update    270 | Timesteps:    8,880,128 | FPS:      673 | Reward:   3.219 | LR: 4.80e-05 | Entropy:   5.817 | KL:  0.6054
+Update    280 | Timesteps:    9,207,808 | FPS:      673 | Reward:   3.220 | LR: 4.78e-05 | Entropy:   5.722 | KL:  0.3066
+Update    290 | Timesteps:    9,535,488 | FPS:      673 | Reward:   3.222 | LR: 4.76e-05 | Entropy:   5.640 | KL:  0.3649
+Update    300 | Timesteps:    9,863,168 | FPS:      673 | Reward:   3.224 | LR: 4.74e-05 | Entropy:   5.554 | KL:  1.0321
+Saved checkpoint to checkpoints/checkpoint_000300.pkl
+Update    310 | Timesteps:   10,190,848 | FPS:      673 | Reward:   3.226 | LR: 4.71e-05 | Entropy:   5.474 | KL:  1.0407
+Update    320 | Timesteps:   10,518,528 | FPS:      673 | Reward:   3.226 | LR: 4.69e-05 | Entropy:   5.388 | KL:  0.2403
+Update    330 | Timesteps:   10,846,208 | FPS:      674 | Reward:   3.229 | LR: 4.67e-05 | Entropy:   5.299 | KL:  0.6056
+Update    340 | Timesteps:   11,173,888 | FPS:      674 | Reward:   3.230 | LR: 4.64e-05 | Entropy:   5.214 | KL:  0.3468
+Update    350 | Timesteps:   11,501,568 | FPS:      674 | Reward:   3.231 | LR: 4.61e-05 | Entropy:   5.132 | KL:  0.2502
+Saved checkpoint to checkpoints/checkpoint_000350.pkl
+Update    360 | Timesteps:   11,829,248 | FPS:      674 | Reward:   3.232 | LR: 4.58e-05 | Entropy:   5.049 | KL:  0.2240
+Update    370 | Timesteps:   12,156,928 | FPS:      674 | Reward:   3.232 | LR: 4.56e-05 | Entropy:   4.966 | KL:  0.2431
+Update    380 | Timesteps:   12,484,608 | FPS:      674 | Reward:   3.235 | LR: 4.53e-05 | Entropy:   4.886 | KL:  0.2939
+Update    390 | Timesteps:   12,812,288 | FPS:      674 | Reward:   3.237 | LR: 4.50e-05 | Entropy:   4.804 | KL:  0.6417
+
+============================================================
+Early stopping triggered at update 396
+  Best mean reward: 3.2198
+  Updates without improvement: 100
+============================================================
+
+
+Training stopped early. Final model saved to checkpoints/final.pkl
+Total training time: 5.36 hours
+Average FPS: 674
+Best mean reward achieved: 3.2198

@@ -10,7 +10,7 @@ import jax.numpy as jnp
 class ActorCritic(nn.Module):
     action_dim: int
     hidden_dims: Sequence[int] = (256, 256)
-    log_std_min: float = -20.0
+    log_std_min: float = -2.0
     log_std_max: float = 2.0
     
     @nn.compact
@@ -77,7 +77,7 @@ class ActorCriticSeparate(nn.Module):
     action_dim: int
     actor_hidden_dims: Sequence[int] = (256, 256)
     critic_hidden_dims: Sequence[int] = (256, 256)
-    log_std_min: float = -20.0
+    log_std_min: float = -2.0
     log_std_max: float = 2.0
     
     def setup(self):
@@ -98,7 +98,7 @@ class ActorCriticSeparate(nn.Module):
 class Actor(nn.Module):
     action_dim: int
     hidden_dims: Sequence[int] = (256, 256)
-    log_std_min: float = -20.0
+    log_std_min: float = -2.0
     log_std_max: float = 2.0
     
     @nn.compact
