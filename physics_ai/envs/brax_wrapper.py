@@ -91,7 +91,7 @@ class BraxH1EnvWrapper(brax_base.Env):
         rng, cmd_key = jax.random.split(rng)
         
         data = mjx.make_data(self._mjx_model)
-        qpos = self._default_qpos.at[2].set(1.0)
+        qpos = self._default_qpos.at[2].set(0.88)  # Athletic stance height
         data = data.replace(qpos=qpos, qvel=jnp.zeros_like(data.qvel))
         data = mjx.forward(self._mjx_model, data)
         
