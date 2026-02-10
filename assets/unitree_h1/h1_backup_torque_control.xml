@@ -219,33 +219,24 @@
   </contact>
 
   <actuator>
-    <!-- Left leg: High stiffness for weight support -->
-    <position name="left_hip_yaw" joint="left_hip_yaw" kp="200" kv="10" ctrlrange="-0.43 0.43"/>
-    <position name="left_hip_roll" joint="left_hip_roll" kp="200" kv="10" ctrlrange="-0.43 0.43"/>
-    <position name="left_hip_pitch" joint="left_hip_pitch" kp="300" kv="15" ctrlrange="-1.57 1.57"/>
-    <position name="left_knee" joint="left_knee" kp="400" kv="20" ctrlrange="-0.26 2.05"/>
-    <position name="left_ankle" joint="left_ankle" kp="120" kv="8" ctrlrange="-0.87 0.52"/>
-    
-    <!-- Right leg: High stiffness for weight support -->
-    <position name="right_hip_yaw" joint="right_hip_yaw" kp="200" kv="10" ctrlrange="-0.43 0.43"/>
-    <position name="right_hip_roll" joint="right_hip_roll" kp="200" kv="10" ctrlrange="-0.43 0.43"/>
-    <position name="right_hip_pitch" joint="right_hip_pitch" kp="300" kv="15" ctrlrange="-1.57 1.57"/>
-    <position name="right_knee" joint="right_knee" kp="400" kv="20" ctrlrange="-0.26 2.05"/>
-    <position name="right_ankle" joint="right_ankle" kp="120" kv="8" ctrlrange="-0.87 0.52"/>
-    
-    <!-- Torso: Medium stiffness -->
-    <position name="torso" joint="torso" kp="200" kv="10" ctrlrange="-2.35 2.35"/>
-    
-    <!-- Left arm: Lower stiffness (not weight-bearing) -->
-    <position name="left_shoulder_pitch" joint="left_shoulder_pitch" kp="80" kv="5" ctrlrange="-2.87 2.87"/>
-    <position name="left_shoulder_roll" joint="left_shoulder_roll" kp="80" kv="5" ctrlrange="-0.34 3.11"/>
-    <position name="left_shoulder_yaw" joint="left_shoulder_yaw" kp="40" kv="4" ctrlrange="-1.3 4.45"/>
-    <position name="left_elbow" joint="left_elbow" kp="40" kv="4" ctrlrange="-1.25 2.61"/>
-    
-    <!-- Right arm: Lower stiffness (not weight-bearing) -->
-    <position name="right_shoulder_pitch" joint="right_shoulder_pitch" kp="80" kv="5" ctrlrange="-2.87 2.87"/>
-    <position name="right_shoulder_roll" joint="right_shoulder_roll" kp="80" kv="5" ctrlrange="-3.11 0.34"/>
-    <position name="right_shoulder_yaw" joint="right_shoulder_yaw" kp="40" kv="4" ctrlrange="-4.45 1.3"/>
-    <position name="right_elbow" joint="right_elbow" kp="40" kv="4" ctrlrange="-1.25 2.61"/>
+    <motor class="h1" name="left_hip_yaw" joint="left_hip_yaw" ctrlrange="-200 200"/>
+    <motor class="h1" name="left_hip_roll" joint="left_hip_roll" ctrlrange="-200 200"/>
+    <motor class="h1" name="left_hip_pitch" joint="left_hip_pitch" ctrlrange="-200 200"/>
+    <motor class="h1" name="left_knee" joint="left_knee" ctrlrange="-300 300"/>
+    <motor class="h1" name="left_ankle" joint="left_ankle" ctrlrange="-40 40"/>
+    <motor class="h1" name="right_hip_yaw" joint="right_hip_yaw" ctrlrange="-200 200"/>
+    <motor class="h1" name="right_hip_roll" joint="right_hip_roll" ctrlrange="-200 200"/>
+    <motor class="h1" name="right_hip_pitch" joint="right_hip_pitch" ctrlrange="-200 200"/>
+    <motor class="h1" name="right_knee" joint="right_knee" ctrlrange="-300 300"/>
+    <motor class="h1" name="right_ankle" joint="right_ankle" ctrlrange="-40 40"/>
+    <motor class="h1" name="torso" joint="torso" ctrlrange="-200 200"/>
+    <motor class="h1" name="left_shoulder_pitch" joint="left_shoulder_pitch" ctrlrange="-40 40"/>
+    <motor class="h1" name="left_shoulder_roll" joint="left_shoulder_roll" ctrlrange="-40 40"/>
+    <motor class="h1" name="left_shoulder_yaw" joint="left_shoulder_yaw" ctrlrange="-18 18"/>
+    <motor class="h1" name="left_elbow" joint="left_elbow" ctrlrange="-18 18"/>
+    <motor class="h1" name="right_shoulder_pitch" joint="right_shoulder_pitch" ctrlrange="-40 40"/>
+    <motor class="h1" name="right_shoulder_roll" joint="right_shoulder_roll" ctrlrange="-40 40"/>
+    <motor class="h1" name="right_shoulder_yaw" joint="right_shoulder_yaw" ctrlrange="-18 18"/>
+    <motor class="h1" name="right_elbow" joint="right_elbow" ctrlrange="-18 18"/>
   </actuator>
 </mujoco>

@@ -32,7 +32,7 @@ class EnvConfig:
     episode_length: int = 1000
     dt: float = 0.005
     control_decimation: int = 4
-    action_scale: float = 50.0
+    action_scale: float = 0.25
     
     default_joint_angles: dict[str, float] | None = None
     
@@ -138,7 +138,7 @@ class UnitreeH1Env:
             data = mjx.make_data(self.mjx_model)
             
             qpos = self._default_qpos
-            qpos = qpos.at[2].set(1.0)  # Initial height
+            qpos = qpos.at[2].set(0.88)  # Initial height for athletic stance (bent knees)
             
             data = data.replace(qpos=qpos, qvel=jnp.zeros_like(data.qvel))
             data = mjx.forward(self.mjx_model, data)
@@ -247,7 +247,7 @@ class UnitreeH1Env:
     ):
         def reset_single(key):
             data = mjx.make_data(self.mjx_model)
-            qpos = self._default_qpos.at[2].set(1.0)
+            qpos = self._default_qpos.at[2].set(0.88)  # Athletic stance height
             data = data.replace(qpos=qpos, qvel=jnp.zeros_like(data.qvel))
             data = mjx.forward(self.mjx_model, data)
             return data

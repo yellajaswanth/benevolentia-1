@@ -54,7 +54,7 @@ rewards:
     weight: 0.2
   height:
     weight: 0.1
-    target_height: 0.98
+    target_height: 0.88
   energy:
     weight: -0.001
   smoothness:
