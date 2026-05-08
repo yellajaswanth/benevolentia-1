@@ -255,6 +255,7 @@ def train(
     train_config: TrainingConfig,
     reward_config: RewardConfig,
 ):
+    print("WARNING: scripts/train.py is the legacy custom-PPO path and is not part of the canonical Brax baseline.")
     rng = jax.random.PRNGKey(train_config.seed)
     rng, env_key, agent_key = jax.random.split(rng, 3)
     
@@ -474,4 +475,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

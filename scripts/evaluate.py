@@ -2,388 +2,342 @@
 from __future__ import annotations
 
 import argparse
-import time
+import json
+import pickle
 from pathlib import Path
+from typing import Any
 
+import imageio
 import jax
 import jax.numpy as jnp
+import mujoco
 import numpy as np
+import yaml
+from brax.training.agents.ppo import networks as ppo_networks
 
-from physics_ai.agents.ppo import PPOAgent, PPOConfig
-from physics_ai.envs.h1_env import UnitreeH1Env, EnvConfig
-from physics_ai.envs.wrappers import LocoMuJoCoWrapper
+from physics_ai.config import RuntimeConfig, load_runtime_config
+from physics_ai.envs.brax_wrapper import create_brax_h1_env
+from physics_ai.utils.jax_utils import quat_rotate_inverse
+
+
+def load_policy_bundle(checkpoint_path: str) -> dict[str, Any]:
+    with open(checkpoint_path, "rb") as f:
+        bundle = pickle.load(f)
+    if not isinstance(bundle, dict) or "params" not in bundle:
+        raise ValueError(
+            "Expected a canonical Brax policy bundle with a 'params' field. "
+            "Use checkpoints/brax_policy.pkl from scripts/train_brax.py."
+        )
+    return bundle
+
+
+def runtime_config_from_bundle(bundle: dict[str, Any], checkpoint_path: str) -> RuntimeConfig:
+    resolved = bundle.get("resolved_config")
+    if resolved:
+        temp_path = Path(checkpoint_path).with_name(".tmp_resolved_config_for_eval.yaml")
+        with open(temp_path, "w") as f:
+            yaml.safe_dump(resolved, f, sort_keys=False)
+        try:
+            return load_runtime_config(temp_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    sibling = Path(checkpoint_path).with_name("resolved_config.yaml")
+    if sibling.exists():
+        return load_runtime_config(sibling)
+
+    return load_runtime_config("configs/h1_walking.yaml")
+
+
+def create_inference_fn(bundle: dict[str, Any]):
+    ppo_network = ppo_networks.make_ppo_networks(bundle["obs_size"], bundle["action_size"])
+    make_inference_fn = ppo_networks.make_inference_fn(ppo_network)
+    return make_inference_fn(bundle["params"], deterministic=True)
+
+
+def compute_local_velocity(pipeline_state) -> np.ndarray:
+    base_quat = pipeline_state.qpos[3:7]
+    base_lin_vel = pipeline_state.qvel[:3]
+    base_lin_vel_local = quat_rotate_inverse(base_quat, base_lin_vel)
+    return np.array(base_lin_vel_local)
+
+
+def evaluate_scenario(
+    env,
+    inference_fn,
+    seed: int,
+    command: jnp.ndarray,
+    max_steps: int,
+) -> dict[str, Any]:
+    rng = jax.random.PRNGKey(seed)
+    state = env.reset(rng)
+    state = env.set_command(state, command)
+
+    reward_breakdown_sum = {
+        "velocity_tracking": 0.0,
+        "yaw_tracking": 0.0,
+        "upright": 0.0,
+        "height": 0.0,
+        "energy": 0.0,
+        "smoothness": 0.0,
+        "alive": 0.0,
+        "termination_penalty": 0.0,
+    }
+    achieved_local_velocities = []
+    start_x = float(state.pipeline_state.qpos[0])
+    final_x = start_x
+    fall_count = 0
+    steps = 0
+
+    for _ in range(max_steps):
+        rng, act_rng = jax.random.split(rng)
+        prev_action = state.info["prev_action"]
+        command_before_step = state.info["command"]
+        action, _ = inference_fn(state.obs, act_rng)
+        action = jnp.asarray(action)
+        state = env.step(state, action)
+        steps += 1
+        final_x = float(state.pipeline_state.qpos[0])
+
+        breakdown = env._compute_reward_components(
+            mjx_data=state.pipeline_state,
+            action=action,
+            prev_action=prev_action,
+            command=command_before_step,
+            done=state.done > 0,
+        )
+        for key in reward_breakdown_sum:
+            reward_breakdown_sum[key] += float(breakdown[key])
+
+        achieved_local_velocities.append(compute_local_velocity(state.pipeline_state))
+
+        if float(state.done) > 0:
+            fall_count = 1
+            break
+
+    mean_local_velocity = (
+        np.mean(np.stack(achieved_local_velocities, axis=0), axis=0)
+        if achieved_local_velocities
+        else np.zeros(3)
+    )
+    denom = max(steps, 1)
+
+    return {
+        "seed": seed,
+        "command": np.array(command).tolist(),
+        "episode_length": steps,
+        "fell": bool(fall_count),
+        "fall_rate": float(fall_count),
+        "distance_x": final_x - start_x,
+        "mean_local_velocity": mean_local_velocity.tolist(),
+        "reward_breakdown": {key: value / denom for key, value in reward_breakdown_sum.items()},
+    }
+
+
+def evaluate_bundle(
+    bundle: dict[str, Any],
+    runtime_config: RuntimeConfig,
+    max_steps: int | None = None,
+) -> dict[str, Any]:
+    inference_fn = create_inference_fn(bundle)
+    env = create_brax_h1_env(
+        env_config=runtime_config.env,
+        reward_config=runtime_config.reward,
+        dr_config=runtime_config.domain_randomization,
+        termination_config=runtime_config.termination,
+    )
+
+    scenarios = []
+    max_eval_steps = max_steps or runtime_config.evaluation.max_steps
+    for scenario in runtime_config.evaluation.fixed_commands:
+        seed_results = []
+        command = jnp.array(scenario.command)
+        for seed in runtime_config.evaluation.seeds:
+            seed_results.append(
+                evaluate_scenario(
+                    env=env,
+                    inference_fn=inference_fn,
+                    seed=seed,
+                    command=command,
+                    max_steps=max_eval_steps,
+                )
+            )
+
+        scenario_summary = {
+            "name": scenario.name,
+            "command": list(scenario.command),
+            "mean_episode_length": float(np.mean([r["episode_length"] for r in seed_results])),
+            "mean_fall_rate": float(np.mean([r["fall_rate"] for r in seed_results])),
+            "mean_distance_x": float(np.mean([r["distance_x"] for r in seed_results])),
+            "mean_local_velocity": np.mean(
+                np.array([r["mean_local_velocity"] for r in seed_results]),
+                axis=0,
+            ).tolist(),
+            "mean_reward_breakdown": {
+                key: float(np.mean([r["reward_breakdown"][key] for r in seed_results]))
+                for key in seed_results[0]["reward_breakdown"]
+            },
+            "seed_results": seed_results,
+        }
+        scenarios.append(scenario_summary)
+
+    return {
+        "checkpoint_seed": bundle.get("seed"),
+        "evaluation_seeds": list(runtime_config.evaluation.seeds),
+        "scenarios": scenarios,
+    }
 
 
 def record_video(
-    agent: PPOAgent,
-    output_path: str = "walking_demo.mp4",
-    num_episodes: int = 1,
-    max_steps: int = 500,
+    bundle: dict[str, Any],
+    runtime_config: RuntimeConfig,
+    output_path: str,
+    scenario_name: str,
+    seed: int,
+    max_steps: int | None = None,
     fps: int = 30,
-    seed: int = 0,
-    width: int = 640,
-    height: int = 480,
-) -> dict:
-    import imageio
-    import mujoco
-    from mujoco import mjx
-    from pathlib import Path
-    
-    config = EnvConfig(num_envs=1)
-    env = UnitreeH1Env(config=config)
-    
+    width: int = 1280,
+    height: int = 720,
+) -> None:
+    inference_fn = create_inference_fn(bundle)
+    env = create_brax_h1_env(
+        env_config=runtime_config.env,
+        reward_config=runtime_config.reward,
+        dr_config=runtime_config.domain_randomization,
+        termination_config=runtime_config.termination,
+    )
+    scenario = next((item for item in runtime_config.evaluation.fixed_commands if item.name == scenario_name), None)
+    if scenario is None:
+        available = [item.name for item in runtime_config.evaluation.fixed_commands]
+        raise ValueError(f"Unknown scenario '{scenario_name}'. Available scenarios: {available}")
+
+    rng = jax.random.PRNGKey(seed)
+    state = env.reset(rng)
+    state = env.set_command(state, jnp.array(scenario.command))
+
     scene_path = Path(__file__).parent.parent / "assets" / "unitree_h1" / "scene.xml"
     scene_model = mujoco.MjModel.from_xml_path(str(scene_path))
-    scene_model.opt.timestep = config.dt
+    scene_model.opt.timestep = runtime_config.env.dt
     scene_model.vis.global_.offwidth = max(width, scene_model.vis.global_.offwidth)
     scene_model.vis.global_.offheight = max(height, scene_model.vis.global_.offheight)
-    
-    mjx_scene_model = mjx.put_model(scene_model)
-    
+
     renderer = mujoco.Renderer(scene_model, height=height, width=width)
     mj_data = mujoco.MjData(scene_model)
-    
-    rng = jax.random.PRNGKey(seed)
     frames = []
-    episode_rewards = []
-    episode_lengths = []
-    
-    print(f"Recording {num_episodes} episode(s) to {output_path}...")
-    
-    for ep in range(num_episodes):
-        rng, reset_key = jax.random.split(rng)
-        
-        mjx_data = mjx.make_data(mjx_scene_model)
-        qpos = jnp.array(scene_model.qpos0)
-        qpos = qpos.at[2].set(0.98)
-        mjx_data = mjx_data.replace(qpos=qpos, qvel=jnp.zeros_like(mjx_data.qvel))
-        mjx_data = mjx.forward(mjx_scene_model, mjx_data)
-        
-        command = jnp.array([[0.5, 0.0, 0.0]])
-        prev_action = jnp.zeros((1, env.num_actions))
-        
-        ep_reward = 0.0
-        ep_length = 0
-        
-        for step in range(max_steps):
-            obs = env._compute_obs(
-                jax.tree.map(lambda x: x[None, ...], mjx_data),
-                command
-            )
-            
-            action, _, _, _ = agent.get_action(agent.state, obs, deterministic=True)
-            
-            scaled_action = action[0] * config.action_scale
-            mjx_data = mjx_data.replace(ctrl=scaled_action)
-            for _ in range(config.control_decimation):
-                mjx_data = mjx.step(mjx_scene_model, mjx_data)
-            
-            ep_length += 1
-            
-            mj_data.qpos[:] = np.array(mjx_data.qpos)
-            mj_data.qvel[:] = np.array(mjx_data.qvel)
-            mujoco.mj_forward(scene_model, mj_data)
-            
-            torso_id = mujoco.mj_name2id(scene_model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
-            base_pos = mj_data.xpos[torso_id]
-            
-            if step == 0:
-                print(f"  Initial pos: {base_pos}")
-            if step == max_steps - 1:
-                print(f"  Final pos: {base_pos}")
-            
-            camera = mujoco.MjvCamera()
-            camera.type = mujoco.mjtCamera.mjCAMERA_FREE
-            camera.distance = 3.0
-            camera.azimuth = 45 + step * 0.5
-            camera.elevation = -15
-            camera.lookat[:] = [base_pos[0], base_pos[1], max(base_pos[2], 0.3)]
-            
-            renderer.update_scene(mj_data, camera=camera)
-            frame = renderer.render()
-            frames.append(frame.copy())
-            
-            if step % 50 == 0:
-                print(f"  Episode {ep + 1}, Step {step}/{max_steps}, height={base_pos[2]:.2f}")
-            
-            if base_pos[2] < -0.5:
-                print(f"  Robot fell at step {step}")
-                break
-        
-        episode_rewards.append(ep_reward)
-        episode_lengths.append(ep_length)
-        print(f"Episode {ep + 1}: Length = {ep_length}")
-    
-    print(f"Saving video with {len(frames)} frames at {fps} FPS...")
+
+    for _ in range(max_steps or runtime_config.evaluation.max_steps):
+        rng, act_rng = jax.random.split(rng)
+        action, _ = inference_fn(state.obs, act_rng)
+        action = jnp.asarray(action)
+        state = env.step(state, action)
+
+        mj_data.qpos[:] = np.array(state.pipeline_state.qpos)
+        mj_data.qvel[:] = np.array(state.pipeline_state.qvel)
+        mujoco.mj_forward(scene_model, mj_data)
+
+        torso_id = mujoco.mj_name2id(scene_model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
+        base_pos = mj_data.xpos[torso_id]
+
+        camera = mujoco.MjvCamera()
+        camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+        camera.distance = 3.0
+        camera.azimuth = 45
+        camera.elevation = -15
+        camera.lookat[:] = [base_pos[0], base_pos[1], max(base_pos[2], 0.3)]
+
+        renderer.update_scene(mj_data, camera=camera)
+        frames.append(renderer.render().copy())
+
+        if float(state.done) > 0:
+            break
+
     imageio.mimsave(output_path, frames, fps=fps)
-    print(f"Video saved to {output_path}")
-    
-    return {
-        "mean_reward": np.mean(episode_rewards),
-        "std_reward": np.std(episode_rewards),
-        "mean_length": np.mean(episode_lengths),
-        "std_length": np.std(episode_lengths),
-        "num_frames": len(frames),
-        "output_path": output_path,
-    }
+    print(f"Saved video to {output_path}")
 
 
-def evaluate_policy(
-    agent: PPOAgent,
-    env: UnitreeH1Env,
-    num_episodes: int = 10,
-    max_steps: int = 1000,
-    render: bool = False,
-    verbose: bool = True,
-) -> dict:
-    rng = jax.random.PRNGKey(0)
-    
-    episode_rewards = []
-    episode_lengths = []
-    velocities_achieved = []
-    
-    for ep in range(num_episodes):
-        rng, reset_key = jax.random.split(rng)
-        env_state = env.reset(reset_key)
-        ppo_state = agent.state
-        
-        ep_reward = 0.0
-        ep_length = 0
-        ep_velocities = []
-        
-        for step in range(max_steps):
-            action, _, _, new_rng = agent.get_action(
-                ppo_state,
-                env_state.obs,
-                deterministic=True,
-            )
-            ppo_state = ppo_state._replace(rng=new_rng)
-            
-            env_state = env.step(env_state, action)
-            
-            ep_reward += float(env_state.reward[0])
-            ep_length += 1
-            
-            base_vel = env_state.mjx_data.qvel[0, :2]
-            ep_velocities.append(np.array(base_vel))
-            
-            if render:
-                time.sleep(0.01)
-            
-            if env_state.done[0]:
-                break
-        
-        episode_rewards.append(ep_reward)
-        episode_lengths.append(ep_length)
-        velocities_achieved.append(np.mean(ep_velocities, axis=0))
-        
-        if verbose:
-            print(
-                f"Episode {ep + 1:3d} | "
-                f"Reward: {ep_reward:8.2f} | "
-                f"Length: {ep_length:4d} | "
-                f"Avg Vel: [{velocities_achieved[-1][0]:.2f}, {velocities_achieved[-1][1]:.2f}]"
-            )
-    
-    results = {
-        "mean_reward": np.mean(episode_rewards),
-        "std_reward": np.std(episode_rewards),
-        "mean_length": np.mean(episode_lengths),
-        "std_length": np.std(episode_lengths),
-        "mean_velocity": np.mean(velocities_achieved, axis=0),
-        "episode_rewards": episode_rewards,
-        "episode_lengths": episode_lengths,
-    }
-    
-    return results
-
-
-def evaluate_with_gym(
-    agent: PPOAgent,
-    num_episodes: int = 10,
-    max_steps: int = 1000,
-    render: bool = False,
-    seed: int = 0,
-) -> dict:
-    config = EnvConfig(num_envs=1)
-    wrapper = LocoMuJoCoWrapper(config=config, seed=seed, render_mode="rgb_array" if render else None)
-    
-    episode_rewards = []
-    episode_lengths = []
-    
-    for ep in range(num_episodes):
-        obs, info = wrapper.reset()
-        
-        ep_reward = 0.0
-        ep_length = 0
-        
-        for step in range(max_steps):
-            obs_jax = jnp.array(obs)[None, :]
-            
-            action, _, _, _ = agent.get_action(
-                agent.state,
-                obs_jax,
-                deterministic=True,
-            )
-            action = np.array(action[0])
-            
-            obs, reward, terminated, truncated, info = wrapper.step(action)
-            
-            ep_reward += reward
-            ep_length += 1
-            
-            if render:
-                frame = wrapper.render()
-            
-            if terminated or truncated:
-                break
-        
-        episode_rewards.append(ep_reward)
-        episode_lengths.append(ep_length)
-        
+def print_results(results: dict[str, Any]) -> None:
+    print("\n" + "=" * 60)
+    print("Canonical Brax Evaluation Results")
+    print("=" * 60)
+    for scenario in results["scenarios"]:
+        print(f"Scenario: {scenario['name']} command={scenario['command']}")
         print(
-            f"Episode {ep + 1:3d} | "
-            f"Reward: {ep_reward:8.2f} | "
-            f"Length: {ep_length:4d}"
+            f"  Episode length: {scenario['mean_episode_length']:.1f} | "
+            f"Fall rate: {scenario['mean_fall_rate']:.2f} | "
+            f"Distance x: {scenario['mean_distance_x']:.3f}"
         )
-    
-    wrapper.close()
-    
-    return {
-        "mean_reward": np.mean(episode_rewards),
-        "std_reward": np.std(episode_rewards),
-        "mean_length": np.mean(episode_lengths),
-        "std_length": np.std(episode_lengths),
-    }
-
-
-def print_results(results: dict):
-    print("\n" + "=" * 50)
-    print("Evaluation Results")
-    print("=" * 50)
-    print(f"Mean Reward:  {results['mean_reward']:.2f} ± {results['std_reward']:.2f}")
-    print(f"Mean Length:  {results['mean_length']:.1f} ± {results['std_length']:.1f}")
-    if "mean_velocity" in results:
-        vel = results["mean_velocity"]
-        print(f"Mean Velocity: [{vel[0]:.3f}, {vel[1]:.3f}] m/s")
-    print("=" * 50)
+        print(
+            f"  Mean local velocity: "
+            f"{[round(v, 3) for v in scenario['mean_local_velocity']]}"
+        )
+        print(
+            f"  Reward breakdown: "
+            f"{json.dumps(scenario['mean_reward_breakdown'], sort_keys=True)}"
+        )
+    print("=" * 60)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate trained H1 walking policy")
+    parser = argparse.ArgumentParser(description="Evaluate canonical Brax PPO H1 policy bundle")
     parser.add_argument(
         "--checkpoint",
         type=str,
         required=True,
-        help="Path to checkpoint file",
-    )
-    parser.add_argument(
-        "--num-episodes",
-        type=int,
-        default=10,
-        help="Number of evaluation episodes",
+        help="Path to canonical Brax policy bundle (e.g., checkpoints/brax_policy.pkl)",
     )
     parser.add_argument(
         "--max-steps",
         type=int,
-        default=1000,
-        help="Maximum steps per episode",
+        default=None,
+        help="Override maximum steps per evaluation scenario",
     )
     parser.add_argument(
-        "--render",
-        action="store_true",
-        help="Render the environment",
-    )
-    parser.add_argument(
-        "--gym-wrapper",
-        action="store_true",
-        help="Use Gymnasium wrapper for evaluation",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Random seed",
+        "--output-json",
+        type=str,
+        default=None,
+        help="Optional path to save the evaluation summary as JSON",
     )
     parser.add_argument(
         "--record-video",
         type=str,
         default=None,
-        help="Path to save video (e.g., demo.mp4)",
+        help="Optional path to save a canonical Brax rollout video",
     )
     parser.add_argument(
-        "--video-fps",
-        type=int,
-        default=30,
-        help="Video frames per second",
+        "--scenario",
+        type=str,
+        default="forward_fast",
+        help="Scenario name to use when recording video",
     )
     parser.add_argument(
-        "--video-width",
+        "--seed",
         type=int,
-        default=1280,
-        help="Video width in pixels",
-    )
-    parser.add_argument(
-        "--video-height",
-        type=int,
-        default=720,
-        help="Video height in pixels",
+        default=0,
+        help="Seed to use when recording video",
     )
     args = parser.parse_args()
-    
-    print(f"Loading checkpoint from {args.checkpoint}...")
-    
-    import pickle
-    with open(args.checkpoint, "rb") as f:
-        checkpoint = pickle.load(f)
-    
-    config = EnvConfig(num_envs=1)
-    env = UnitreeH1Env(config=config)
-    
-    agent = PPOAgent(
-        obs_dim=env.obs_dim,
-        action_dim=env.num_actions,
-        config=checkpoint.get("config", PPOConfig()),
-        rng=jax.random.PRNGKey(args.seed),
-    )
-    agent.load(args.checkpoint)
-    
+
+    bundle = load_policy_bundle(args.checkpoint)
+    runtime_config = runtime_config_from_bundle(bundle, args.checkpoint)
     if args.record_video:
-        results = record_video(
-            agent=agent,
+        record_video(
+            bundle=bundle,
+            runtime_config=runtime_config,
             output_path=args.record_video,
-            num_episodes=args.num_episodes,
-            max_steps=args.max_steps,
-            fps=args.video_fps,
+            scenario_name=args.scenario,
             seed=args.seed,
-            width=args.video_width,
-            height=args.video_height,
+            max_steps=args.max_steps,
         )
-        print_results(results)
         return
-    
-    print("Starting evaluation...")
-    
-    if args.gym_wrapper:
-        results = evaluate_with_gym(
-            agent=agent,
-            num_episodes=args.num_episodes,
-            max_steps=args.max_steps,
-            render=args.render,
-            seed=args.seed,
-        )
-    else:
-        results = evaluate_policy(
-            agent=agent,
-            env=env,
-            num_episodes=args.num_episodes,
-            max_steps=args.max_steps,
-            render=args.render,
-        )
-    
+
+    results = evaluate_bundle(bundle, runtime_config, max_steps=args.max_steps)
     print_results(results)
+
+    if args.output_json:
+        with open(args.output_json, "w") as f:
+            json.dump(results, f, indent=2, sort_keys=True)
+        print(f"Saved evaluation summary to {args.output_json}")
 
 
 if __name__ == "__main__":
     main()
-

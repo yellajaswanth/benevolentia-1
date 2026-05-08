@@ -1,12 +1,12 @@
-# PhysicsAI: Unitree H1 Digital Twin
+# PhysicsAI: Unitree H1 Locomotion Baseline
 
-GPU-accelerated digital twin simulation for the Unitree H1 humanoid using MuJoCo MJX with JAX-native PPO for sim-to-real transfer.
+GPU-accelerated locomotion training stack for the Unitree H1 humanoid using MuJoCo MJX with Brax PPO as the canonical training and evaluation path.
 
 ## Features
 
 - **MuJoCo MJX**: Hardware-accelerated physics simulation with XLA support
-- **Brax PPO**: Battle-tested PPO training backend with 50,000-500,000 FPS
-- **JAX-native PPO**: Custom Proximal Policy Optimization using Flax/Optax (legacy)
+- **Brax PPO**: Canonical training backend for the active locomotion baseline
+- **Legacy Custom PPO**: Preserved for reference only, not part of the recommended path
 - **Domain Randomization**: Comprehensive sim-to-real robustness (friction, mass, motor strength, push forces, latency)
 - **LocoMuJoCo Compatible**: Standardized interface for benchmarking
 
@@ -136,7 +136,7 @@ python scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir c
 
 To run in background
 ```bash
-nohup python -u scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir checkpoints > training.log 2>&1 &
+nohup python -u scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir checkpoints --num-envs 512 > training.log 2>&1 &
 ```
 
 **Expected Performance:**
@@ -154,21 +154,31 @@ python scripts/train_brax.py \
     --num-envs 8192
 ```
 
-### Train with Custom PPO (Legacy)
+### Run Diagnostics First
+
+```bash
+python scripts/diagnostics.py --config configs/h1_walking.yaml
+```
+
+This verifies reset parity, actuator semantics, termination logic, observation shape, and domain-randomization sampling before you spend time on training.
+
+### Custom PPO (Legacy Reference Only)
 
 ```bash
 python scripts/train.py --config configs/h1_walking.yaml
 ```
 
-Note: The custom PPO implementation may have stability issues. Use Brax PPO for production training.
+Note: The custom PPO path is quarantined from the canonical Brax baseline. Do not use it to evaluate or compare Brax checkpoints.
 
 ---
 
 ## Evaluation
 
 ```bash
-python scripts/evaluate.py --checkpoint checkpoints/brax_final.pkl
+python scripts/evaluate.py --checkpoint checkpoints/brax_policy.pkl
 ```
+
+Legacy custom-PPO evaluation has been moved behind `scripts/evaluate_legacy.py` and is intentionally not part of the recommended workflow.
 
 ---
 
@@ -182,6 +192,7 @@ physics_ai/
 │   ├── envs/
 │   │   ├── h1_env.py           # Core MJX environment
 │   │   ├── brax_wrapper.py     # Brax-compatible wrapper
+│   │   ├── h1_shared.py        # Shared H1 reset/obs/termination semantics
 │   │   ├── wrappers.py         # Gymnasium wrappers
 │   │   └── domain_rand.py      # Domain randomization
 │   ├── agents/
@@ -195,7 +206,9 @@ physics_ai/
 ├── scripts/
 │   ├── train_brax.py           # Brax PPO training (recommended)
 │   ├── train.py                # Custom PPO training (legacy)
-│   ├── evaluate.py             # Policy evaluation
+│   ├── diagnostics.py          # Canonical environment diagnostics
+│   ├── evaluate.py             # Canonical Brax policy evaluation
+│   ├── evaluate_legacy.py      # Legacy custom-PPO warning shim
 │   └── download_assets.py      # Asset downloader
 ├── assets/
 │   └── unitree_h1/             # Robot MJCF files
@@ -228,6 +241,16 @@ brax_ppo:
 | `num_envs` | 8192 | Parallel environments |
 | `episode_length` | 1000 | Steps per episode |
 | `control_decimation` | 4 | Physics steps per control step |
+| `robot.action_scale` | 0.25 | Position-target delta scale around the default stance |
+| `robot.initial_height` | 0.88 | Reset height for the athletic stance |
+
+### Canonical Artifacts
+
+Training writes:
+- `checkpoints/brax_policy.pkl`: canonical Brax policy bundle for evaluation
+- `checkpoints/brax_final.pkl`: raw params snapshot
+- `checkpoints/resolved_config.yaml`: resolved runtime config used for the run
+- `checkpoints/run_metadata.json`: git commit, config path, and seed metadata
 
 ### Domain Randomization
 

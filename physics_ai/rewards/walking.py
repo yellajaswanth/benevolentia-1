@@ -33,8 +33,32 @@ def compute_reward(
     command: jnp.ndarray,
     joint_qpos_indices: jnp.ndarray,
     joint_qvel_indices: jnp.ndarray,
+    done: jnp.ndarray | None = None,
     config: RewardConfig | None = None,
 ) -> jnp.ndarray:
+    components = compute_reward_components(
+        mjx_data=mjx_data,
+        action=action,
+        prev_action=prev_action,
+        command=command,
+        joint_qpos_indices=joint_qpos_indices,
+        joint_qvel_indices=joint_qvel_indices,
+        done=done,
+        config=config,
+    )
+    return components["total_reward"]
+
+
+def compute_reward_components(
+    mjx_data: mjx.Data,
+    action: jnp.ndarray,
+    prev_action: jnp.ndarray,
+    command: jnp.ndarray,
+    joint_qpos_indices: jnp.ndarray,
+    joint_qvel_indices: jnp.ndarray,
+    done: jnp.ndarray | None = None,
+    config: RewardConfig | None = None,
+) -> dict[str, jnp.ndarray]:
     if config is None:
         config = RewardConfig()
     
@@ -80,8 +104,25 @@ def compute_reward(
         config.smoothness_weight * smoothness +
         alive
     )
-    
-    return total_reward * config.reward_scaling
+
+    if done is None:
+        termination_penalty = jnp.zeros_like(total_reward)
+    else:
+        termination_penalty = done.astype(total_reward.dtype) * config.termination_penalty
+
+    total_reward = (total_reward + termination_penalty) * config.reward_scaling
+
+    return {
+        "velocity_tracking": vel_tracking,
+        "yaw_tracking": yaw_tracking,
+        "upright": upright,
+        "height": height,
+        "energy": energy,
+        "smoothness": smoothness,
+        "alive": alive,
+        "termination_penalty": termination_penalty,
+        "total_reward": total_reward,
+    }
 
 
 def _velocity_tracking_reward(
@@ -152,4 +193,3 @@ class WalkingReward:
             joint_qvel_indices=joint_qvel_indices,
             config=self.config,
         )
-
