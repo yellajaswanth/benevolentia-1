@@ -102,7 +102,7 @@ bash scripts/setup_runpod.sh
 PYTHON_BIN=python3.11 bash scripts/setup_runpod.sh
 ```
 
-This path uses [constraints-runpod-cu12.txt](/Users/jaswanthyella/Benevolentia-1/physics_ai/constraints-runpod-cu12.txt) to pin the active Brax + MJX + JAX stack and avoid long `pip` backtracking on GPU hosts.
+This path uses [requirements-runpod-cu12.txt](/Users/jaswanthyella/Benevolentia-1/physics_ai/requirements-runpod-cu12.txt) to install the exact Brax + MJX + JAX CUDA stack first, then installs the repo in editable mode without re-resolving dependencies.
 
 Manual equivalent:
 
@@ -111,7 +111,8 @@ cd physics_ai
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -c constraints-runpod-cu12.txt -e ".[cuda]"
+python -m pip install -r requirements-runpod-cu12.txt
+python -m pip install --no-deps -e .
 ```
 
 ---

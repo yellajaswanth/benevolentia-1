@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv}"
-CONSTRAINTS_FILE="${CONSTRAINTS_FILE:-$ROOT_DIR/constraints-runpod-cu12.txt}"
+REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-$ROOT_DIR/requirements-runpod-cu12.txt}"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 
 pick_python() {
@@ -35,7 +35,8 @@ fi
 source "$VENV_DIR/bin/activate"
 
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -c "$CONSTRAINTS_FILE" -e ".[cuda]"
+python -m pip install -r "$REQUIREMENTS_FILE"
+python -m pip install --no-deps -e .
 
 python - <<'PY'
 import importlib

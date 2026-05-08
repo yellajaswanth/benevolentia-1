@@ -1,16 +1,18 @@
 # Canonical NVIDIA/Linux dependency set for Runpod-style CUDA 12 environments.
-# Hypothesis: pinning the active Brax + MJX + JAX stack avoids pip backtracking
-# across incompatible combinations and yields a reproducible training setup.
+# Hypothesis: installing the exact active Brax + MJX + JAX stack directly is
+# more reliable on Blackwell-class GPUs than letting pip resolve broad ranges.
 brax==0.14.2
 chex==0.1.91
 flax==0.12.7
 gymnasium==1.3.0
 imageio==2.37.3
-jax[cuda12]==0.10.0
+jax==0.10.0
+jax-cuda12-pjrt==0.10.0
+jax-cuda12-plugin[with-cuda]==0.10.0
 jaxlib==0.10.0
 mujoco==3.8.0
 mujoco-mjx==3.8.0
-numpy==1.26.4
+numpy==2.4.4
 optax==0.2.8
 pyyaml==6.0.3
 scipy==1.17.1
