@@ -94,15 +94,24 @@ file $(which python)
 
 ```bash
 cd physics_ai
-python3.12 -m venv .venv
+
+# Preferred: deterministic Runpod/NVIDIA install with pinned CUDA 12 dependencies
+bash scripts/setup_runpod.sh
+
+# If you need to select a specific interpreter explicitly:
+PYTHON_BIN=python3.11 bash scripts/setup_runpod.sh
+```
+
+This path uses [constraints-runpod-cu12.txt](/Users/jaswanthyella/Benevolentia-1/physics_ai/constraints-runpod-cu12.txt) to pin the active Brax + MJX + JAX stack and avoid long `pip` backtracking on GPU hosts.
+
+Manual equivalent:
+
+```bash
+cd physics_ai
+python3.11 -m venv .venv
 source .venv/bin/activate
-
-# Install with CUDA support
-pip install -e ".[cuda]"
-
-# Or install JAX with CUDA manually
-pip install -e .
-pip install --upgrade "jax[cuda12]"
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -c constraints-runpod-cu12.txt -e ".[cuda]"
 ```
 
 ---

@@ -1,4 +1,5 @@
 *.sh
+!scripts/setup_runpod.sh
 *.pyc
 .venv
 examples
