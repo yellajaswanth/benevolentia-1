@@ -14,6 +14,7 @@ from physics_ai.envs.h1_shared import (
     build_default_qpos,
     compute_observation,
     compute_termination,
+    default_asset_path,
     reset_qpos,
     sample_commands_batched,
 )
@@ -47,7 +48,7 @@ class UnitreeH1Env:
         self.termination_config = termination_config or TerminationConfig()
         
         if asset_path is None:
-            asset_path = Path(__file__).parent.parent.parent / "assets" / "unitree_h1" / "h1.xml"
+            asset_path = default_asset_path()
         self.asset_path = Path(asset_path)
         
         self.mj_model = mujoco.MjModel.from_xml_path(str(self.asset_path))

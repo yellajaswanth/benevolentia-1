@@ -144,6 +144,26 @@ Brax PPO provides significantly faster and more stable training:
 python scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir checkpoints
 ```
 
+### Runtime Smoke Test
+
+Use the smoke test first on new GPU hosts to localize runtime issues before the full diagnostics or training path:
+
+```bash
+python scripts/mjx_smoke_test.py --config configs/h1_walking.yaml
+
+# Optional: include one mjx.step and save structured output
+python scripts/mjx_smoke_test.py \
+  --config configs/h1_walking.yaml \
+  --run-step \
+  --output-json checkpoints/mjx_smoke_test.json
+```
+
+If the smoke test passes, run the fuller staged diagnostics:
+
+```bash
+python scripts/diagnostics.py --config configs/h1_walking.yaml --output-json checkpoints/diagnostics.json
+```
+
 To run in background
 ```bash
 nohup python -u scripts/train_brax.py --config configs/h1_walking.yaml --checkpoint-dir checkpoints --num-envs 512 > training.log 2>&1 &

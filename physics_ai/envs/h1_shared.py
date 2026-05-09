@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -9,6 +10,10 @@ import mujoco
 from physics_ai.config import TerminationConfig, default_joint_angles
 from physics_ai.envs.h1_structs import EnvConfig
 from physics_ai.utils.jax_utils import quat_rotate_inverse
+
+
+def default_asset_path() -> Path:
+    return Path(__file__).parent.parent.parent / "assets" / "unitree_h1" / "h1.xml"
 
 
 def build_default_qpos(

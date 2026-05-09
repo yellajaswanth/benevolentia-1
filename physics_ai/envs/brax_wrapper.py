@@ -16,6 +16,7 @@ from physics_ai.envs.h1_shared import (
     build_default_qpos,
     compute_observation,
     compute_termination,
+    default_asset_path,
     reset_qpos,
     sample_command_single,
 )
@@ -49,8 +50,7 @@ class BraxH1EnvWrapper(brax_base.Env):
         self._termination_config = termination_config or TerminationConfig()
         
         if asset_path is None:
-            from pathlib import Path
-            asset_path = Path(__file__).parent.parent.parent / "assets" / "unitree_h1" / "h1.xml"
+            asset_path = default_asset_path()
         
         self._mj_model = mujoco.MjModel.from_xml_path(str(asset_path))
         self._mj_model.opt.timestep = self._env_config.dt
