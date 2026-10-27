@@ -119,7 +119,8 @@ def evaluate_scenario(
         achieved_local_velocities.append(compute_local_velocity(state.pipeline_state))
 
         if float(state.done) > 0:
-            fall_count = 1
+            # Reaching the time limit also sets done; only count real falls.
+            fall_count = int(float(state.info["truncation"]) == 0.0)
             break
 
     mean_local_velocity = (
