@@ -4,6 +4,8 @@ Slow on CPU (each jit of env.step takes ~30 s), so steps share one module-level 
 """
 from __future__ import annotations
 
+import dataclasses
+
 import jax
 import jax.numpy as jnp
 import mujoco
@@ -115,6 +117,25 @@ def test_reset_and_step_share_state_structure(env, step_fn, reset_state):
     stepped = step_fn(reset_state, jnp.zeros(env.action_size))
     assert jax.tree.structure(stepped.metrics) == jax.tree.structure(reset_state.metrics)
     assert jax.tree.structure(stepped.info) == jax.tree.structure(reset_state.info)
+
+
+def test_auto_reset_restarts_episode_bookkeeping(runtime_config):
+    """Brax's AutoResetWrapper restores only pipeline_state and obs. Per-episode
+    info must restart too, or step_count keeps growing across episodes."""
+    from brax.envs.wrappers import training
+
+    env_config = dataclasses.replace(runtime_config.env, episode_length=15)
+    env = create_brax_h1_env(env_config, runtime_config.reward, None, runtime_config.termination)
+    wrapped = training.wrap(env, episode_length=15, action_repeat=1)
+    state = wrapped.reset(jax.random.split(jax.random.PRNGKey(0), 2))
+    step = jax.jit(wrapped.step)
+    dones = 0
+    for _ in range(50):
+        state = step(state, jnp.zeros((2, env.action_size)))
+        dones += int(state.done.sum())
+        assert int(state.info["step_count"].max()) < 15
+    # Time limit of 15 steps over 50 steps: ~3 resets per env, not one per step.
+    assert dones <= 2 * 4
 
 
 def test_enabled_domain_randomization_is_refused():

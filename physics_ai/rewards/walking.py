@@ -20,7 +20,8 @@ class RewardConfig:
     contact_match: float = 0.2
     feet_air_time: float = 1.0
     feet_air_time_max: float = 0.5
-    feet_swing_height: float = -20.0
+    feet_phase: float = 1.0
+    feet_phase_sigma: float = 0.01
     swing_height_target: float = 0.08
     feet_slip: float = -0.05
     orientation: float = -1.0
@@ -54,6 +55,7 @@ class RewardInputs:
     first_contact: jnp.ndarray      # (2,) bool, touchdown this step
     air_time: jnp.ndarray           # (2,) seconds airborne before touchdown
     foot_height: jnp.ndarray        # (2,) sole height above floor
+    foot_height_target: jnp.ndarray # (2,) gait-clock target sole height
     foot_vel_xy: jnp.ndarray        # (2, 2) world-frame horizontal foot velocity
     done: jnp.ndarray               # () fell this step (not truncation)
 
@@ -63,7 +65,7 @@ REWARD_TERMS = (
     "tracking_ang_vel",
     "contact_match",
     "feet_air_time",
-    "feet_swing_height",
+    "feet_phase",
     "feet_slip",
     "orientation",
     "base_height",
@@ -82,13 +84,13 @@ def compute_reward_terms(inputs: RewardInputs, config: RewardConfig) -> dict[str
     moving = jnp.linalg.norm(inputs.command[:2]) > config.move_command_threshold
     # Standing still is commanded: both feet should stay down.
     desired_contact = jnp.where(moving, inputs.desired_contact, True)
-    in_swing = ~desired_contact
+    foot_height_target = jnp.where(moving, inputs.foot_height_target, 0.0)
 
     lin_vel_error = jnp.sum((inputs.base_lin_vel[:2] - inputs.command[:2]) ** 2)
     ang_vel_error = (inputs.base_ang_vel[2] - inputs.command[2]) ** 2
 
     air_time = jnp.clip(inputs.air_time, 0.0, config.feet_air_time_max)
-    swing_height_error = (inputs.foot_height - config.swing_height_target) ** 2
+    foot_height_error = jnp.sum((inputs.foot_height - foot_height_target) ** 2)
 
     return {
         "tracking_lin_vel": jnp.exp(-lin_vel_error / config.tracking_sigma),
@@ -96,7 +98,8 @@ def compute_reward_terms(inputs: RewardInputs, config: RewardConfig) -> dict[str
         "contact_match": jnp.sum(inputs.foot_contact == desired_contact).astype(jnp.float32),
         # Never negative: shuffling earns little, but lifting a foot is never worse than not.
         "feet_air_time": jnp.sum(air_time * inputs.first_contact) * moving,
-        "feet_swing_height": jnp.sum(swing_height_error * in_swing),
+        # Dense stepping signal: feet follow the gait clock's height curve.
+        "feet_phase": jnp.exp(-foot_height_error / config.feet_phase_sigma),
         "feet_slip": jnp.sum(jnp.sum(inputs.foot_vel_xy**2, axis=-1) * inputs.foot_contact),
         "orientation": jnp.sum(inputs.projected_gravity[:2] ** 2),
         "base_height": (inputs.base_height - config.target_height) ** 2,

@@ -9,6 +9,13 @@
 > Also fixed: the configured 0.88 m reset height started the feet 10 cm under the floor (it is now derived from the pose, about 0.98 m), and the reward rotated an already body-frame angular velocity a second time.
 >
 > No previous training result says anything about whether the reward or PPO settings worked.
+>
+> **Update (first GPU runs, 2026-10-27):** three more bugs turned up during training:
+> - Brax `batch_size` defaulted to `num_envs × rollout_length`, so one PPO update cost ~134M env steps. It is now `num_envs / num_minibatches`.
+> - Brax's auto-reset restores only physics and the observation, so `step_count` carried over between episodes. After ~8M total steps every step counted as the time limit, and run 1 collapsed. The env now resets its per-episode info itself.
+> - `scripts/evaluate.py` rebuilt the policy without observation normalisation, so every evaluation and video showed a broken policy.
+>
+> The run 1 swing-height penalty was too weak to produce stepping, so it was replaced by a Playground-style `feet_phase` reward, trained on curriculum stage A (fixed 0.5 m/s). Run 2 (200M steps, 32 min on one RTX 4090) walks: full 20 s episodes, 0.48–0.49 m/s, alternating 1.25 Hz gait.
 
 1. **The reward pays for standing still.** With `velocity_tracking.exp_scale: 2.0` and commands of 0 to 0.5 m/s, a robot standing perfectly still earns about 95% of the velocity reward. On top of that it gets `alive: 1.0` every step and a −10 penalty for falling. "Don't fall" is the best strategy available.
 2. **Nothing teaches it to step.** The reward has no foot terms (air time, contact timing, swing height, slip). The observation has no gait clock and no previous action, and the foot geoms have no names, so foot contact can't be measured at all.

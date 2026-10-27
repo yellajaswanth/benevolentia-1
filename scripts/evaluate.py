@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import mujoco
 import numpy as np
 import yaml
+from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 
 from physics_ai.config import RuntimeConfig, load_runtime_config
@@ -61,7 +62,20 @@ def runtime_config_from_bundle(bundle: dict[str, Any], checkpoint_path: str) -> 
 
 
 def create_inference_fn(bundle: dict[str, Any]):
-    ppo_network = ppo_networks.make_ppo_networks(bundle["obs_size"], bundle["action_size"])
+    network = bundle.get("network", {})
+    brax_ppo = bundle.get("resolved_config", {}).get("brax_ppo", {})
+    # Must match training: with normalize_observations the params carry running
+    # statistics and the policy expects normalized inputs.
+    normalize = (
+        running_statistics.normalize if brax_ppo.get("normalize_observations", True) else (lambda x, y: x)
+    )
+    ppo_network = ppo_networks.make_ppo_networks(
+        bundle["obs_size"],
+        bundle["action_size"],
+        preprocess_observations_fn=normalize,
+        policy_hidden_layer_sizes=tuple(network.get("policy_hidden_layer_sizes", (512, 256, 128))),
+        value_hidden_layer_sizes=tuple(network.get("value_hidden_layer_sizes", (512, 256, 128))),
+    )
     make_inference_fn = ppo_networks.make_inference_fn(ppo_network)
     return make_inference_fn(bundle["params"], deterministic=True)
 
@@ -217,12 +231,19 @@ def record_video(
     renderer = mujoco.Renderer(scene_model, height=height, width=width)
     mj_data = mujoco.MjData(scene_model)
     frames = []
+    step_fn = jax.jit(env.step)
+    inference_fn = jax.jit(inference_fn)
+    # Physics runs at 1 / control_dt Hz; keep every n-th frame to hit the video fps.
+    frame_stride = max(int(round(1.0 / (env.control_dt * fps))), 1)
 
-    for _ in range(max_steps or runtime_config.evaluation.max_steps):
+    for step_idx in range(max_steps or runtime_config.evaluation.max_steps):
         rng, act_rng = jax.random.split(rng)
         action, _ = inference_fn(state.obs, act_rng)
-        action = jnp.asarray(action)
-        state = env.step(state, action)
+        state = step_fn(state, jnp.asarray(action))
+        if step_idx % frame_stride:
+            if float(state.done) > 0:
+                break
+            continue
 
         mj_data.qpos[:] = np.array(state.pipeline_state.qpos)
         mj_data.qvel[:] = np.array(state.pipeline_state.qvel)
@@ -244,7 +265,7 @@ def record_video(
         if float(state.done) > 0:
             break
 
-    imageio.mimsave(output_path, frames, fps=fps)
+    imageio.mimsave(output_path, frames, fps=1.0 / (env.control_dt * frame_stride))
     print(f"Saved video to {output_path}")
 
 

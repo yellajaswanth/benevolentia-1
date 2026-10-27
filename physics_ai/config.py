@@ -62,12 +62,19 @@ class EvaluationConfig:
 
 
 @dataclass
+class NetworkConfig:
+    policy_hidden_layer_sizes: tuple[int, ...] = (512, 256, 128)
+    value_hidden_layer_sizes: tuple[int, ...] = (512, 256, 128)
+
+
+@dataclass
 class RuntimeConfig:
     env: EnvConfig
     reward: RewardConfig
     domain_randomization: DomainRandomizationConfig
     termination: TerminationConfig
     brax_ppo: dict[str, Any]
+    network: NetworkConfig
     evaluation: EvaluationConfig
     raw_config: dict[str, Any] = field(default_factory=dict)
 
@@ -84,8 +91,8 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
     termination_cfg = cfg.get("termination", {})
     dr_cfg = cfg.get("domain_randomization", {})
     train_cfg = cfg.get("training", {})
-    ppo_cfg = cfg.get("ppo", {})
     brax_ppo_cfg = cfg.get("brax_ppo", {})
+    network_cfg = cfg.get("network", {})
     eval_cfg = cfg.get("evaluation", {})
 
     env = EnvConfig(
@@ -130,24 +137,35 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
         latency_range_ms=tuple(dr_cfg.get("latency", {}).get("range_ms", [0, 20])),
     )
 
+    # Brax semantics: each PPO update consumes batch_size * num_minibatches *
+    # unroll_length env steps, and batch_size * num_minibatches must be a
+    # multiple of num_envs. batch_size = num_envs / num_minibatches gives one
+    # unroll per env per update.
+    num_minibatches = brax_ppo_cfg.get("num_minibatches", 32)
     brax_ppo = {
-        "num_timesteps": train_cfg.get("total_timesteps", 400_000_000),
-        "num_evals": train_cfg.get("num_evals", 100),
+        "num_timesteps": train_cfg.get("total_timesteps", 200_000_000),
+        "num_evals": train_cfg.get("num_evals", 20),
         "episode_length": env.episode_length,
         "num_envs": env.num_envs,
-        "learning_rate": brax_ppo_cfg.get("learning_rate", ppo_cfg.get("learning_rate", 3e-4)),
-        "entropy_cost": brax_ppo_cfg.get("entropy_cost", 0.001),
-        "discounting": brax_ppo_cfg.get("discounting", ppo_cfg.get("gamma", 0.99)),
-        "unroll_length": brax_ppo_cfg.get("unroll_length", train_cfg.get("rollout_length", 32)),
-        "batch_size": brax_ppo_cfg.get("batch_size", env.num_envs * train_cfg.get("rollout_length", 32)),
-        "num_minibatches": brax_ppo_cfg.get("num_minibatches", ppo_cfg.get("num_minibatches", 32)),
-        "num_updates_per_batch": brax_ppo_cfg.get("num_updates_per_batch", ppo_cfg.get("num_epochs", 4)),
+        "learning_rate": brax_ppo_cfg.get("learning_rate", 3e-4),
+        "entropy_cost": brax_ppo_cfg.get("entropy_cost", 0.01),
+        "discounting": brax_ppo_cfg.get("discounting", 0.97),
+        "unroll_length": brax_ppo_cfg.get("unroll_length", 20),
+        "batch_size": brax_ppo_cfg.get("batch_size", max(env.num_envs // num_minibatches, 1)),
+        "num_minibatches": num_minibatches,
+        "num_updates_per_batch": brax_ppo_cfg.get("num_updates_per_batch", 4),
         "normalize_observations": brax_ppo_cfg.get("normalize_observations", True),
         "reward_scaling": brax_ppo_cfg.get("reward_scaling", 1.0),
-        "clipping_epsilon": brax_ppo_cfg.get("clipping_epsilon", ppo_cfg.get("clip_ratio", 0.2)),
-        "gae_lambda": brax_ppo_cfg.get("gae_lambda", ppo_cfg.get("gae_lambda", 0.95)),
+        "clipping_epsilon": brax_ppo_cfg.get("clipping_epsilon", 0.2),
+        "gae_lambda": brax_ppo_cfg.get("gae_lambda", 0.95),
+        "max_grad_norm": brax_ppo_cfg.get("max_grad_norm", 1.0),
         "seed": train_cfg.get("seed", 42),
     }
+
+    network = NetworkConfig(
+        policy_hidden_layer_sizes=tuple(network_cfg.get("policy_hidden_layer_sizes", (512, 256, 128))),
+        value_hidden_layer_sizes=tuple(network_cfg.get("value_hidden_layer_sizes", (512, 256, 128))),
+    )
 
     scenarios = []
     for idx, item in enumerate(eval_cfg.get("fixed_commands", [])):
@@ -169,6 +187,7 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
         domain_randomization=domain_randomization,
         termination=termination,
         brax_ppo=brax_ppo,
+        network=network,
         evaluation=evaluation,
         raw_config=cfg,
     )

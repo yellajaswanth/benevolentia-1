@@ -34,6 +34,8 @@ def make_inputs(**overrides) -> RewardInputs:
         first_contact=jnp.array([False, False]),
         air_time=jnp.zeros(2),
         foot_height=jnp.zeros(2),
+        # Mid-swing of the right foot: the gait clock wants it at swing height.
+        foot_height_target=jnp.array([0.0, 0.08]),
         foot_vel_xy=jnp.zeros((2, 2)),
         done=jnp.array(False),
     )
@@ -62,6 +64,7 @@ def walking_touchdown() -> RewardInputs:
         desired_contact=jnp.array([True, True]),
         first_contact=jnp.array([False, True]),
         air_time=jnp.array([0.0, 0.4]),
+        foot_height_target=jnp.zeros(2),
     )
 
 
@@ -98,6 +101,12 @@ def test_standing_wins_when_commanded_to_stand(config):
         config,
     )
     assert float(standing) > float(stepping_in_place)
+
+
+def test_feet_phase_rewards_lifting_the_swing_foot(config):
+    standing = compute_reward_terms(standing_still(), config)["feet_phase"]
+    stepping = compute_reward_terms(walking_on_command(), config)["feet_phase"]
+    assert float(stepping) > float(standing) + 0.3
 
 
 def test_air_time_reward_is_never_negative(config):

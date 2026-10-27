@@ -24,6 +24,7 @@ from physics_ai.envs.h1_shared import (
     compute_termination,
     default_asset_path,
     desired_foot_contact,
+    desired_foot_height,
     foot_contact,
     name_ids,
     observation_size,
@@ -158,6 +159,11 @@ class BraxH1EnvWrapper(brax_base.Env):
             "air_time": jnp.zeros(2),
             "last_contact": jnp.ones(2, dtype=bool),
             "prev_foot_pos": data.site_xpos[self._foot_site_ids],
+            # Brax's AutoResetWrapper restores only pipeline_state and obs from the
+            # first reset; step() uses these to restore the rest of info to match.
+            "first_command": command,
+            "first_phase": phase,
+            "first_foot_pos": data.site_xpos[self._foot_site_ids],
         }
 
         return BraxState(
@@ -217,6 +223,9 @@ class BraxH1EnvWrapper(brax_base.Env):
                 hip_offset=(joint_pos - self._default_joint_pos)[self._hip_joint_indices],
                 foot_contact=contact,
                 desired_contact=desired_foot_contact(phase, self._env_config.stance_ratio),
+                foot_height_target=desired_foot_height(
+                    phase, self._env_config.stance_ratio, self._reward_config.swing_height_target
+                ),
                 first_contact=first_contact,
                 air_time=air_time,
                 foot_height=foot_pos[:, 2],
@@ -226,6 +235,8 @@ class BraxH1EnvWrapper(brax_base.Env):
             self._reward_config,
         )
 
+        # The env applies its own time limit (same episode_length as Brax's
+        # EpisodeWrapper) so it sees every episode end and can reset its info.
         step_count = state.info["step_count"] + 1
         truncated = step_count >= self._env_config.episode_length
         done = done | truncated
@@ -256,6 +267,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             "last_contact": contact,
             "prev_foot_pos": foot_pos,
         }
+        info = self._reset_episode_info_where(done, info)
 
         return BraxState(
             pipeline_state=mjx_data,
@@ -265,6 +277,26 @@ class BraxH1EnvWrapper(brax_base.Env):
             metrics=metrics,
             info=info,
         )
+
+    def _reset_episode_info_where(self, done: jnp.ndarray, info: dict[str, Any]) -> dict[str, Any]:
+        """Return per-episode info to its first-reset values where the episode ended.
+
+        Without this, step_count, air time and the rest carried over across
+        auto-resets (only pipeline_state and obs are restored by Brax).
+        """
+        fresh = {
+            "command": info["first_command"],
+            "prev_action": jnp.zeros_like(info["prev_action"]),
+            "step_count": jnp.zeros_like(info["step_count"]),
+            "phase": info["first_phase"],
+            "air_time": jnp.zeros_like(info["air_time"]),
+            "last_contact": jnp.ones_like(info["last_contact"]),
+            "prev_foot_pos": info["first_foot_pos"],
+        }
+        return {
+            **info,
+            **{key: jnp.where(done, value, info[key]) for key, value in fresh.items()},
+        }
 
     def _compute_obs(
         self,

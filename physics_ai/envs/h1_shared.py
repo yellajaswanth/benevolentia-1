@@ -135,6 +135,13 @@ def desired_foot_contact(phase: jnp.ndarray, stance_ratio: float) -> jnp.ndarray
     return foot_phase < stance_ratio
 
 
+def desired_foot_height(phase: jnp.ndarray, stance_ratio: float, swing_height: float) -> jnp.ndarray:
+    """(2,) target sole height: zero in stance, a sine bump peaking at swing_height mid-swing."""
+    foot_phase = jnp.stack([phase, (phase + 0.5) % 1.0])
+    swing_progress = jnp.clip((foot_phase - stance_ratio) / (1.0 - stance_ratio), 0.0, 1.0)
+    return jnp.where(foot_phase >= stance_ratio, swing_height * jnp.sin(jnp.pi * swing_progress), 0.0)
+
+
 def compute_observation(
     qpos: jnp.ndarray,
     qvel: jnp.ndarray,
