@@ -12,7 +12,13 @@ import mujoco
 from mujoco import mjx
 
 from physics_ai.config import load_runtime_config
-from physics_ai.envs.h1_shared import build_default_qpos, default_asset_path, reset_qpos
+from physics_ai.envs.h1_shared import (
+    build_default_qpos,
+    default_asset_path,
+    reset_qpos,
+    restrict_contacts_to_feet,
+    standing_height,
+)
 
 
 def main() -> None:
@@ -63,6 +69,7 @@ def main() -> None:
         mark("mujoco_model_load:start")
         mj_model = mujoco.MjModel.from_xml_path(str(asset_path))
         mj_model.opt.timestep = runtime_config.env.dt
+        restrict_contacts_to_feet(mj_model)
         results["model"] = {
             "nq": int(mj_model.nq),
             "nv": int(mj_model.nv),
@@ -73,7 +80,10 @@ def main() -> None:
 
         mark("default_pose_build:start")
         default_qpos = build_default_qpos(mj_model, runtime_config.env.default_joint_angles)
-        qpos = reset_qpos(default_qpos, runtime_config.env.initial_height)
+        initial_height = runtime_config.env.initial_height
+        if initial_height is None:
+            initial_height = standing_height(mj_model, default_qpos)
+        qpos = reset_qpos(default_qpos, initial_height)
         mark("default_pose_build:done")
 
         mark("mjx_put_model:start")

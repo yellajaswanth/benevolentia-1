@@ -1,195 +1,120 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
-import jax
+import flax.struct
 import jax.numpy as jnp
-from mujoco import mjx
-
-from physics_ai.utils.jax_utils import quat_rotate_inverse
 
 
 @dataclass
 class RewardConfig:
-    reward_scaling: float = 0.1
-    velocity_tracking_weight: float = 1.0
-    velocity_tracking_scale: float = 0.25
-    yaw_rate_weight: float = 0.5
-    yaw_rate_scale: float = 0.25
-    upright_weight: float = 0.2
-    height_weight: float = 0.1
+    """Weights follow unitree_rl_gym H1 / MuJoCo Playground; signs are in the weights.
+
+    Lesson from earlier runs: tracking_sigma must stay small (0.25). A forgiving
+    sigma lets a robot standing still collect most of the velocity reward.
+    """
+
+    tracking_lin_vel: float = 1.0
+    tracking_ang_vel: float = 0.5
+    tracking_sigma: float = 0.25
+    contact_match: float = 0.2
+    feet_air_time: float = 1.0
+    feet_air_time_max: float = 0.5
+    feet_swing_height: float = -20.0
+    swing_height_target: float = 0.08
+    feet_slip: float = -0.05
+    orientation: float = -1.0
+    base_height: float = -10.0
     target_height: float = 0.98
-    energy_weight: float = -0.001
-    smoothness_weight: float = -0.01
-    alive_bonus: float = 1.0
-    termination_penalty: float = -10.0
+    lin_vel_z: float = -2.0
+    ang_vel_xy: float = -0.05
+    action_rate: float = -0.01
+    torques: float = -1e-5
+    hip_deviation: float = -1.0
+    alive: float = 0.15
+    termination: float = -10.0
+    move_command_threshold: float = 0.1
 
 
-def compute_reward(
-    mjx_data: mjx.Data,
-    action: jnp.ndarray,
-    prev_action: jnp.ndarray,
-    command: jnp.ndarray,
-    joint_qpos_indices: jnp.ndarray,
-    joint_qvel_indices: jnp.ndarray,
-    done: jnp.ndarray | None = None,
-    config: RewardConfig | None = None,
-) -> jnp.ndarray:
-    components = compute_reward_components(
-        mjx_data=mjx_data,
-        action=action,
-        prev_action=prev_action,
-        command=command,
-        joint_qpos_indices=joint_qpos_indices,
-        joint_qvel_indices=joint_qvel_indices,
-        done=done,
-        config=config,
-    )
-    return components["total_reward"]
+@flax.struct.dataclass
+class RewardInputs:
+    """Everything the reward needs for one env at one control step."""
+
+    base_lin_vel: jnp.ndarray       # (3,) pelvis frame
+    base_ang_vel: jnp.ndarray       # (3,) pelvis frame
+    projected_gravity: jnp.ndarray  # (3,)
+    base_height: jnp.ndarray        # ()
+    command: jnp.ndarray            # (3,) vx, vy, yaw rate
+    action: jnp.ndarray             # (nu,)
+    prev_action: jnp.ndarray        # (nu,)
+    torques: jnp.ndarray            # (nu,)
+    hip_offset: jnp.ndarray         # (4,) hip yaw/roll minus default
+    foot_contact: jnp.ndarray       # (2,) bool
+    desired_contact: jnp.ndarray    # (2,) bool, from the gait clock
+    first_contact: jnp.ndarray      # (2,) bool, touchdown this step
+    air_time: jnp.ndarray           # (2,) seconds airborne before touchdown
+    foot_height: jnp.ndarray        # (2,) sole height above floor
+    foot_vel_xy: jnp.ndarray        # (2, 2) world-frame horizontal foot velocity
+    done: jnp.ndarray               # () fell this step (not truncation)
 
 
-def compute_reward_components(
-    mjx_data: mjx.Data,
-    action: jnp.ndarray,
-    prev_action: jnp.ndarray,
-    command: jnp.ndarray,
-    joint_qpos_indices: jnp.ndarray,
-    joint_qvel_indices: jnp.ndarray,
-    done: jnp.ndarray | None = None,
-    config: RewardConfig | None = None,
-) -> dict[str, jnp.ndarray]:
-    if config is None:
-        config = RewardConfig()
-    
-    qpos = mjx_data.qpos
-    qvel = mjx_data.qvel
-    
-    base_pos = qpos[:, :3]
-    base_quat = qpos[:, 3:7]
-    base_lin_vel = qvel[:, :3]
-    base_ang_vel = qvel[:, 3:6]
-    
-    base_lin_vel_local = jax.vmap(quat_rotate_inverse)(base_quat, base_lin_vel)
-    base_ang_vel_local = jax.vmap(quat_rotate_inverse)(base_quat, base_ang_vel)
-    
-    vel_tracking = _velocity_tracking_reward(
-        base_lin_vel_local[:, :2],
-        command[:, :2],
-        config.velocity_tracking_scale,
-    )
-    
-    yaw_tracking = _yaw_rate_tracking_reward(
-        base_ang_vel_local[:, 2],
-        command[:, 2],
-        config.yaw_rate_scale,
-    )
-    
-    upright = _upright_reward(base_quat)
-    
-    height = _height_reward(base_pos[:, 2], config.target_height)
-    
-    energy = _energy_penalty(action)
-    
-    smoothness = _smoothness_penalty(action, prev_action)
-    
-    alive = jnp.ones(action.shape[0]) * config.alive_bonus
-    
-    total_reward = (
-        config.velocity_tracking_weight * vel_tracking +
-        config.yaw_rate_weight * yaw_tracking +
-        config.upright_weight * upright +
-        config.height_weight * height +
-        config.energy_weight * energy +
-        config.smoothness_weight * smoothness +
-        alive
-    )
+REWARD_TERMS = (
+    "tracking_lin_vel",
+    "tracking_ang_vel",
+    "contact_match",
+    "feet_air_time",
+    "feet_swing_height",
+    "feet_slip",
+    "orientation",
+    "base_height",
+    "lin_vel_z",
+    "ang_vel_xy",
+    "action_rate",
+    "torques",
+    "hip_deviation",
+    "alive",
+    "termination",
+)
 
-    if done is None:
-        termination_penalty = jnp.zeros_like(total_reward)
-    else:
-        termination_penalty = done.astype(total_reward.dtype) * config.termination_penalty
 
-    total_reward = (total_reward + termination_penalty) * config.reward_scaling
+def compute_reward_terms(inputs: RewardInputs, config: RewardConfig) -> dict[str, jnp.ndarray]:
+    """Unweighted reward terms for a single env."""
+    moving = jnp.linalg.norm(inputs.command[:2]) > config.move_command_threshold
+    # Standing still is commanded: both feet should stay down.
+    desired_contact = jnp.where(moving, inputs.desired_contact, True)
+    in_swing = ~desired_contact
+
+    lin_vel_error = jnp.sum((inputs.base_lin_vel[:2] - inputs.command[:2]) ** 2)
+    ang_vel_error = (inputs.base_ang_vel[2] - inputs.command[2]) ** 2
+
+    air_time = jnp.clip(inputs.air_time, 0.0, config.feet_air_time_max)
+    swing_height_error = (inputs.foot_height - config.swing_height_target) ** 2
 
     return {
-        "velocity_tracking": vel_tracking,
-        "yaw_tracking": yaw_tracking,
-        "upright": upright,
-        "height": height,
-        "energy": energy,
-        "smoothness": smoothness,
-        "alive": alive,
-        "termination_penalty": termination_penalty,
-        "total_reward": total_reward,
+        "tracking_lin_vel": jnp.exp(-lin_vel_error / config.tracking_sigma),
+        "tracking_ang_vel": jnp.exp(-ang_vel_error / config.tracking_sigma),
+        "contact_match": jnp.sum(inputs.foot_contact == desired_contact).astype(jnp.float32),
+        # Never negative: shuffling earns little, but lifting a foot is never worse than not.
+        "feet_air_time": jnp.sum(air_time * inputs.first_contact) * moving,
+        "feet_swing_height": jnp.sum(swing_height_error * in_swing),
+        "feet_slip": jnp.sum(jnp.sum(inputs.foot_vel_xy**2, axis=-1) * inputs.foot_contact),
+        "orientation": jnp.sum(inputs.projected_gravity[:2] ** 2),
+        "base_height": (inputs.base_height - config.target_height) ** 2,
+        "lin_vel_z": inputs.base_lin_vel[2] ** 2,
+        "ang_vel_xy": jnp.sum(inputs.base_ang_vel[:2] ** 2),
+        "action_rate": jnp.sum((inputs.action - inputs.prev_action) ** 2),
+        "torques": jnp.sum(inputs.torques**2),
+        "hip_deviation": jnp.sum(inputs.hip_offset**2),
+        "alive": jnp.ones(()),
+        "termination": inputs.done.astype(jnp.float32),
     }
 
 
-def _velocity_tracking_reward(
-    current_vel: jnp.ndarray,
-    target_vel: jnp.ndarray,
-    scale: float,
-) -> jnp.ndarray:
-    vel_error = jnp.sum((current_vel - target_vel) ** 2, axis=-1)
-    return jnp.exp(-vel_error / scale)
-
-
-def _yaw_rate_tracking_reward(
-    current_yaw_rate: jnp.ndarray,
-    target_yaw_rate: jnp.ndarray,
-    scale: float,
-) -> jnp.ndarray:
-    yaw_error = (current_yaw_rate - target_yaw_rate) ** 2
-    return jnp.exp(-yaw_error / scale)
-
-
-def _upright_reward(base_quat: jnp.ndarray) -> jnp.ndarray:
-    gravity_world = jnp.array([0.0, 0.0, -1.0])
-    projected_gravity = jax.vmap(quat_rotate_inverse)(
-        base_quat,
-        jnp.tile(gravity_world, (base_quat.shape[0], 1)),
-    )
-    return projected_gravity[:, 2]
-
-
-def _height_reward(
-    current_height: jnp.ndarray,
-    target_height: float,
-) -> jnp.ndarray:
-    height_error = jnp.abs(current_height - target_height)
-    return jnp.exp(-height_error * 10.0)
-
-
-def _energy_penalty(action: jnp.ndarray) -> jnp.ndarray:
-    return jnp.sum(action ** 2, axis=-1)
-
-
-def _smoothness_penalty(
-    action: jnp.ndarray,
-    prev_action: jnp.ndarray,
-) -> jnp.ndarray:
-    return jnp.sum((action - prev_action) ** 2, axis=-1)
-
-
-class WalkingReward:
-    def __init__(self, config: RewardConfig | None = None):
-        self.config = config or RewardConfig()
-    
-    def __call__(
-        self,
-        mjx_data: mjx.Data,
-        action: jnp.ndarray,
-        prev_action: jnp.ndarray,
-        command: jnp.ndarray,
-        joint_qpos_indices: jnp.ndarray,
-        joint_qvel_indices: jnp.ndarray,
-    ) -> jnp.ndarray:
-        return compute_reward(
-            mjx_data=mjx_data,
-            action=action,
-            prev_action=prev_action,
-            command=command,
-            joint_qpos_indices=joint_qpos_indices,
-            joint_qvel_indices=joint_qvel_indices,
-            config=self.config,
-        )
+def compute_reward(
+    inputs: RewardInputs, config: RewardConfig
+) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
+    """Total reward plus each weighted term, for logging."""
+    terms = compute_reward_terms(inputs, config)
+    weighted = {name: getattr(config, name) * terms[name] for name in REWARD_TERMS}
+    total = sum(weighted.values())
+    return total, weighted

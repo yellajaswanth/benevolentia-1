@@ -95,27 +95,20 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
         control_decimation=env_cfg.get("control_decimation", 4),
         action_scale=robot_cfg.get("action_scale", 0.25),
         default_joint_angles=robot_cfg.get("default_joint_angles", default_joint_angles()),
-        initial_height=robot_cfg.get("initial_height", 0.88),
+        initial_height=robot_cfg.get("initial_height"),
         vx_range=tuple(commands_cfg.get("vx_range", [-1.0, 1.0])),
         vy_range=tuple(commands_cfg.get("vy_range", [-0.5, 0.5])),
         vyaw_range=tuple(commands_cfg.get("vyaw_range", [-1.0, 1.0])),
         command_resample_time=commands_cfg.get("resample_time", 10.0),
+        gait_frequency=env_cfg.get("gait_frequency", 1.25),
+        stance_ratio=env_cfg.get("stance_ratio", 0.55),
     )
 
-    reward = RewardConfig(
-        reward_scaling=rewards_cfg.get("reward_scaling", 0.1),
-        velocity_tracking_weight=rewards_cfg.get("velocity_tracking", {}).get("weight", 1.0),
-        velocity_tracking_scale=rewards_cfg.get("velocity_tracking", {}).get("exp_scale", 0.25),
-        yaw_rate_weight=rewards_cfg.get("yaw_rate_tracking", {}).get("weight", 0.5),
-        yaw_rate_scale=rewards_cfg.get("yaw_rate_tracking", {}).get("exp_scale", 0.25),
-        upright_weight=rewards_cfg.get("upright", {}).get("weight", 0.2),
-        height_weight=rewards_cfg.get("height", {}).get("weight", 0.1),
-        target_height=rewards_cfg.get("height", {}).get("target_height", env.initial_height),
-        energy_weight=rewards_cfg.get("energy", {}).get("weight", -0.001),
-        smoothness_weight=rewards_cfg.get("smoothness", {}).get("weight", -0.01),
-        alive_bonus=rewards_cfg.get("alive", {}).get("weight", 1.0),
-        termination_penalty=rewards_cfg.get("termination", {}).get("weight", -10.0),
-    )
+    # Flat mapping: every key under `rewards:` must be a RewardConfig field.
+    unknown_reward_keys = set(rewards_cfg) - set(RewardConfig.__dataclass_fields__)
+    if unknown_reward_keys:
+        raise ValueError(f"Unknown reward config keys: {sorted(unknown_reward_keys)}")
+    reward = RewardConfig(**rewards_cfg)
 
     termination = TerminationConfig(
         min_height=termination_cfg.get("min_height", 0.3),
@@ -124,16 +117,16 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
     )
 
     domain_randomization = DomainRandomizationConfig(
-        friction_enabled=dr_cfg.get("friction", {}).get("enabled", True),
+        friction_enabled=dr_cfg.get("friction", {}).get("enabled", False),
         friction_range=tuple(dr_cfg.get("friction", {}).get("range", [0.2, 1.0])),
-        mass_enabled=dr_cfg.get("mass", {}).get("enabled", True),
+        mass_enabled=dr_cfg.get("mass", {}).get("enabled", False),
         mass_scale_range=tuple(dr_cfg.get("mass", {}).get("scale_range", [0.9, 1.1])),
-        motor_strength_enabled=dr_cfg.get("motor_strength", {}).get("enabled", True),
+        motor_strength_enabled=dr_cfg.get("motor_strength", {}).get("enabled", False),
         motor_strength_range=tuple(dr_cfg.get("motor_strength", {}).get("scale_range", [0.85, 1.15])),
-        push_enabled=dr_cfg.get("push_force", {}).get("enabled", True),
+        push_enabled=dr_cfg.get("push_force", {}).get("enabled", False),
         push_magnitude_range=tuple(dr_cfg.get("push_force", {}).get("magnitude_range", [0.0, 50.0])),
         push_interval_range=tuple(dr_cfg.get("push_force", {}).get("interval", [5.0, 15.0])),
-        latency_enabled=dr_cfg.get("latency", {}).get("enabled", True),
+        latency_enabled=dr_cfg.get("latency", {}).get("enabled", False),
         latency_range_ms=tuple(dr_cfg.get("latency", {}).get("range_ms", [0, 20])),
     )
 

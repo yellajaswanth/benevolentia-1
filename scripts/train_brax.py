@@ -132,6 +132,7 @@ def train(
             "params": params,
             "obs_size": env.observation_size,
             "action_size": env.action_size,
+            "obs_version": env.obs_version,
             "resolved_config": runtime_config_to_dict(runtime_config),
             "seed": brax_config["seed"],
         }, f)

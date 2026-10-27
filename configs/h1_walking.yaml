@@ -3,12 +3,16 @@ env:
   episode_length: 1000
   dt: 0.005
   control_decimation: 4
+  # Gait clock: left foot leads, right foot half a cycle behind.
+  gait_frequency: 1.25
+  stance_ratio: 0.55
   
 robot:
-  asset_path: "assets/unitree_h1/h1.xml"
+  asset_path: "assets/unitree_h1/scene.xml"  # robot + floor; h1.xml alone has no ground
   num_actions: 19
   action_scale: 0.25
-  initial_height: 0.88
+  # initial_height is derived from default_joint_angles so the feet start on the
+  # floor (about 0.98 m for this pose). Only set it to override.
   default_joint_angles:
     left_hip_yaw: 0.0
     left_hip_roll: 0.0
@@ -45,26 +49,28 @@ commands:
   resample_time: 10.0
 
 rewards:
-  reward_scaling: 1.0
-  velocity_tracking:
-    weight: 2.0
-    exp_scale: 2.0
-  yaw_rate_tracking:
-    weight: 0.5
-    exp_scale: 1.0
-  upright:
-    weight: 0.2
-  height:
-    weight: 0.1
-    target_height: 0.88
-  energy:
-    weight: -0.001
-  smoothness:
-    weight: -0.01
-  alive:
-    weight: 1.0
-  termination:
-    weight: -10.0
+  # Weights carry their sign. Keep tracking_sigma small: a forgiving sigma pays a
+  # robot standing still almost as much as one walking (see tests/test_reward_sanity.py).
+  tracking_lin_vel: 1.0
+  tracking_ang_vel: 0.5
+  tracking_sigma: 0.25
+  contact_match: 0.2
+  feet_air_time: 1.0
+  feet_air_time_max: 0.5
+  feet_swing_height: -20.0
+  swing_height_target: 0.08
+  feet_slip: -0.05
+  orientation: -1.0
+  base_height: -10.0
+  target_height: 0.98
+  lin_vel_z: -2.0
+  ang_vel_xy: -0.05
+  action_rate: -0.01
+  torques: -1.0e-5
+  hip_deviation: -1.0
+  alive: 0.15
+  termination: -10.0
+  move_command_threshold: 0.1
 
 termination:
   max_pitch: 0.5

@@ -6,9 +6,8 @@ GPU-accelerated locomotion training stack for the Unitree H1 humanoid using MuJo
 
 - **MuJoCo MJX**: Hardware-accelerated physics simulation with XLA support
 - **Brax PPO**: Canonical training backend for the active locomotion baseline
-- **Legacy Custom PPO**: Preserved for reference only, not part of the recommended path
-- **Domain Randomization**: Comprehensive sim-to-real robustness (friction, mass, motor strength, push forces, latency)
-- **LocoMuJoCo Compatible**: Standardized interface for benchmarking
+- **Gait-aware environment**: Feet-only floor contact, foot contact/air-time sensing, gait clock in the observation
+- **Domain Randomization**: Configured but not yet applied by the environment (planned; enabling it raises an error)
 
 ## Quick Start
 
@@ -190,15 +189,15 @@ python scripts/train_brax.py \
 python scripts/diagnostics.py --config configs/h1_walking.yaml
 ```
 
-This verifies reset parity, actuator semantics, termination logic, observation shape, and domain-randomization sampling before you spend time on training.
+This verifies foot contact (at reset, while standing, and after lifting one leg), actuator semantics, termination logic, and observation shape before you spend time on training.
 
-### Custom PPO (Legacy Reference Only)
+### Tests
 
 ```bash
-python scripts/train.py --config configs/h1_walking.yaml
+pytest tests
 ```
 
-Note: The custom PPO path is quarantined from the canonical Brax baseline. Do not use it to evaluate or compare Brax checkpoints.
+`tests/test_reward_sanity.py` checks that walking out-earns standing when the robot is told to walk. `tests/test_env.py` checks the floor, foot contact, termination and observation layout.
 
 ---
 
@@ -207,8 +206,6 @@ Note: The custom PPO path is quarantined from the canonical Brax baseline. Do no
 ```bash
 python scripts/evaluate.py --checkpoint checkpoints/brax_policy.pkl
 ```
-
-Legacy custom-PPO evaluation has been moved behind `scripts/evaluate_legacy.py` and is intentionally not part of the recommended workflow.
 
 ---
 
@@ -220,28 +217,21 @@ physics_ai/
 │   └── h1_walking.yaml         # Training hyperparameters
 ├── physics_ai/
 │   ├── envs/
-│   │   ├── h1_env.py           # Core MJX environment
-│   │   ├── brax_wrapper.py     # Brax-compatible wrapper
-│   │   ├── h1_shared.py        # Shared H1 reset/obs/termination semantics
-│   │   ├── wrappers.py         # Gymnasium wrappers
-│   │   └── domain_rand.py      # Domain randomization
-│   ├── agents/
-│   │   ├── ppo.py              # Custom PPO agent
-│   │   ├── networks.py         # Actor-Critic networks
-│   │   └── rollout_buffer.py   # Experience buffer + GAE
+│   │   ├── brax_wrapper.py     # The H1 environment (Brax/MJX)
+│   │   ├── h1_shared.py        # Reset, observation, feet, termination helpers
+│   │   └── domain_rand.py      # Domain randomization (not yet wired in)
 │   ├── rewards/
 │   │   └── walking.py          # Walking reward function
 │   └── utils/
 │       └── jax_utils.py        # JAX utilities
 ├── scripts/
 │   ├── train_brax.py           # Brax PPO training (recommended)
-│   ├── train.py                # Custom PPO training (legacy)
 │   ├── diagnostics.py          # Canonical environment diagnostics
 │   ├── evaluate.py             # Canonical Brax policy evaluation
-│   ├── evaluate_legacy.py      # Legacy custom-PPO warning shim
 │   └── download_assets.py      # Asset downloader
+├── tests/                      # Reward sanity and environment integrity tests
 ├── assets/
-│   └── unitree_h1/             # Robot MJCF files
+│   └── unitree_h1/             # Robot MJCF files (scene.xml = robot + floor)
 └── checkpoints/                # Saved models
 ```
 
@@ -272,7 +262,9 @@ brax_ppo:
 | `episode_length` | 1000 | Steps per episode |
 | `control_decimation` | 4 | Physics steps per control step |
 | `robot.action_scale` | 0.25 | Position-target delta scale around the default stance |
-| `robot.initial_height` | 0.88 | Reset height for the athletic stance |
+| `robot.initial_height` | derived | Reset height; computed from the default pose so the feet start on the floor (~0.98 m) |
+| `gait_frequency` | 1.25 | Gait clock frequency (Hz) |
+| `stance_ratio` | 0.55 | Fraction of the gait cycle each foot should be in contact |
 
 ### Canonical Artifacts
 
@@ -283,6 +275,8 @@ Training writes:
 - `checkpoints/run_metadata.json`: git commit, config path, and seed metadata
 
 ### Domain Randomization
+
+Not applied yet: the environment raises an error if any entry is enabled.
 
 | Category | Parameter | Range |
 |----------|-----------|-------|
