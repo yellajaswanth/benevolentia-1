@@ -3,32 +3,41 @@ env:
   episode_length: 1000
   dt: 0.005
   control_decimation: 4
+  # Gait clock: left foot leads, right foot half a cycle behind. Frequency scales
+  # with commanded speed: 0.75 Hz standing-pace -> 1.0 Hz at 0.5 m/s -> 1.25 Hz at 1 m/s.
+  gait_frequency_base: 0.75
+  gait_frequency_per_mps: 0.5
+  stance_ratio: 0.6
   
 robot:
-  asset_path: "assets/unitree_h1/h1.xml"
+  asset_path: "assets/unitree_h1/scene.xml"  # robot + floor; h1.xml alone has no ground
   num_actions: 19
-  action_scale: 0.25
-  initial_height: 0.88
+  action_scale: 0.3
+  # initial_height is derived from default_joint_angles so the feet start on the
+  # floor (about 0.98 m for this pose). Only set it to override.
+  # Near Unitree's own H1 stance (hip -0.1, knee 0.3, ankle -0.2), slightly more
+  # bent for margin. Arms hang down: at elbow = 0 the H1 forearm points forward,
+  # so elbow 1.25 rad puts it mostly downward with a relaxed bend.
   default_joint_angles:
     left_hip_yaw: 0.0
     left_hip_roll: 0.0
-    left_hip_pitch: -0.4
-    left_knee: 0.8
-    left_ankle: -0.4
+    left_hip_pitch: -0.15
+    left_knee: 0.4
+    left_ankle: -0.25
     right_hip_yaw: 0.0
     right_hip_roll: 0.0
-    right_hip_pitch: -0.4
-    right_knee: 0.8
-    right_ankle: -0.4
+    right_hip_pitch: -0.15
+    right_knee: 0.4
+    right_ankle: -0.25
     torso: 0.0
     left_shoulder_pitch: 0.0
-    left_shoulder_roll: 0.0
+    left_shoulder_roll: 0.15
     left_shoulder_yaw: 0.0
-    left_elbow: 0.0
+    left_elbow: 1.25
     right_shoulder_pitch: 0.0
-    right_shoulder_roll: 0.0
+    right_shoulder_roll: -0.15
     right_shoulder_yaw: 0.0
-    right_elbow: 0.0
+    right_elbow: 1.25
 
 observation:
   joint_pos: true
@@ -39,32 +48,42 @@ observation:
   projected_gravity: true
 
 commands:
-  vx_range: [0.0, 0.5]
-  vy_range: [-0.2, 0.2]
-  vyaw_range: [-0.3, 0.3]
+  # Curriculum stage B: forward speeds 0-1 m/s, 10% stand-still commands.
+  vx_range: [0.0, 1.0]
+  vy_range: [0.0, 0.0]
+  vyaw_range: [0.0, 0.0]
+  stand_probability: 0.1
   resample_time: 10.0
 
 rewards:
-  reward_scaling: 1.0
-  velocity_tracking:
-    weight: 2.0
-    exp_scale: 2.0
-  yaw_rate_tracking:
-    weight: 0.5
-    exp_scale: 1.0
-  upright:
-    weight: 0.2
-  height:
-    weight: 0.1
-    target_height: 0.88
-  energy:
-    weight: -0.001
-  smoothness:
-    weight: -0.01
-  alive:
-    weight: 1.0
-  termination:
-    weight: -10.0
+  # Weights carry their sign. Keep tracking_sigma small: a forgiving sigma pays a
+  # robot standing still almost as much as one walking (see tests/test_reward_sanity.py).
+  tracking_lin_vel: 1.0
+  tracking_ang_vel: 0.5
+  tracking_sigma: 0.25
+  contact_match: 0.2
+  feet_air_time: 1.0
+  feet_air_time_max: 0.5
+  feet_phase: 1.0
+  feet_phase_sigma: 0.008
+  swing_height_target: 0.06
+  feet_slip: -0.05
+  orientation: -1.0
+  base_height: -1.0       # target_height omitted: derived from the default pose
+  lin_vel_z: -0.5
+  ang_vel_xy: -0.05
+  action_rate: -0.01
+  torques: -1.0e-5
+  hip_deviation: -1.0
+  feet_distance: -5.0          # mild anchor; H1 legs hang 0.41 m apart at zero hip roll
+  feet_distance_target: 0.30
+  torso_deviation: -2.0
+  arm_swing: -2.0
+  arm_swing_gain: 1.0
+  arm_posture: -0.5
+  alive: 0.15
+  termination: -10.0
+  move_command_threshold: 0.1
 
 termination:
   max_pitch: 0.5
@@ -89,49 +108,29 @@ domain_randomization:
     enabled: false
     range_ms: [0, 20]
 
-ppo:
-  learning_rate: 3.0e-4
-  clip_ratio: 0.2
-  gamma: 0.99
-  gae_lambda: 0.95
-  entropy_coef: 0.02
-  value_coef: 0.5
-  max_grad_norm: 0.5
-  num_epochs: 4
-  num_minibatches: 8
-  normalize_advantages: true
-  target_kl: 0.05
-
 training:
-  total_timesteps: 50_000_000
-  rollout_length: 16
-  eval_interval: 100
-  save_interval: 50
-  log_interval: 10
-  num_evals: 100
+  total_timesteps: 200_000_000
+  num_evals: 20
   seed: 42
-  # Learning rate schedule
-  lr_schedule: "cosine"
-  warmup_ratio: 0.05
-  min_lr_ratio: 0.1
-  # Early stopping
-  early_stopping: false
-  patience: 200
-  min_improvement: 0.001
-  reward_window: 50
 
-# Brax PPO configuration (used by train_brax.py)
+# Brax PPO (scripts/train_brax.py). batch_size defaults to num_envs / num_minibatches,
+# so each update uses one unroll per env: 8192 envs x 20 steps = 163,840 env steps.
 brax_ppo:
   learning_rate: 3.0e-4
   entropy_cost: 0.01
-  discounting: 0.99
-  unroll_length: 32
+  discounting: 0.97
+  unroll_length: 20
   num_minibatches: 32
-  num_updates_per_batch: 8
+  num_updates_per_batch: 4
   normalize_observations: true
   reward_scaling: 1.0
   clipping_epsilon: 0.2
   gae_lambda: 0.95
+  max_grad_norm: 1.0
+
+network:
+  policy_hidden_layer_sizes: [512, 256, 128]
+  value_hidden_layer_sizes: [512, 256, 128]
 
 evaluation:
   seeds: [0, 1, 2]

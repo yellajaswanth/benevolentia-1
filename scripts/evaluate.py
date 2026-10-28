@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import pickle
 from pathlib import Path
@@ -13,10 +14,13 @@ import jax.numpy as jnp
 import mujoco
 import numpy as np
 import yaml
+from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 
 from physics_ai.config import RuntimeConfig, load_runtime_config
 from physics_ai.envs.brax_wrapper import create_brax_h1_env
+from physics_ai.envs.h1_shared import OBS_VERSION
+from physics_ai.rewards.walking import REWARD_TERMS
 from physics_ai.utils.jax_utils import quat_rotate_inverse
 
 
@@ -28,11 +32,20 @@ def load_policy_bundle(checkpoint_path: str) -> dict[str, Any]:
             "Expected a canonical Brax policy bundle with a 'params' field. "
             "Use checkpoints/brax_policy.pkl from scripts/train_brax.py."
         )
+    if bundle.get("obs_version") != OBS_VERSION:
+        raise ValueError(
+            f"Checkpoint observation layout v{bundle.get('obs_version')} does not match the "
+            f"current env (v{OBS_VERSION}). Retrain; old policies read the wrong features."
+        )
     return bundle
 
 
 def runtime_config_from_bundle(bundle: dict[str, Any], checkpoint_path: str) -> RuntimeConfig:
     resolved = bundle.get("resolved_config")
+    # The original YAML is stored under raw_config; the rest of resolved_config uses
+    # dataclass field names that load_runtime_config does not read.
+    if resolved and resolved.get("raw_config"):
+        resolved = resolved["raw_config"]
     if resolved:
         temp_path = Path(checkpoint_path).with_name(".tmp_resolved_config_for_eval.yaml")
         with open(temp_path, "w") as f:
@@ -50,9 +63,28 @@ def runtime_config_from_bundle(bundle: dict[str, Any], checkpoint_path: str) -> 
 
 
 def create_inference_fn(bundle: dict[str, Any]):
-    ppo_network = ppo_networks.make_ppo_networks(bundle["obs_size"], bundle["action_size"])
+    network = bundle.get("network", {})
+    brax_ppo = bundle.get("resolved_config", {}).get("brax_ppo", {})
+    # Must match training: with normalize_observations the params carry running
+    # statistics and the policy expects normalized inputs.
+    normalize = (
+        running_statistics.normalize if brax_ppo.get("normalize_observations", True) else (lambda x, y: x)
+    )
+    ppo_network = ppo_networks.make_ppo_networks(
+        bundle["obs_size"],
+        bundle["action_size"],
+        preprocess_observations_fn=normalize,
+        policy_hidden_layer_sizes=tuple(network.get("policy_hidden_layer_sizes", (512, 256, 128))),
+        value_hidden_layer_sizes=tuple(network.get("value_hidden_layer_sizes", (512, 256, 128))),
+    )
     make_inference_fn = ppo_networks.make_inference_fn(ppo_network)
     return make_inference_fn(bundle["params"], deterministic=True)
+
+
+def fixed_command_env_config(runtime_config: RuntimeConfig):
+    """Scenarios hold one command for the whole episode; training's periodic
+    command resampling would otherwise replace it after resample_time."""
+    return dataclasses.replace(runtime_config.env, command_resample_time=1e6)
 
 
 def compute_local_velocity(pipeline_state) -> np.ndarray:
@@ -73,46 +105,29 @@ def evaluate_scenario(
     state = env.reset(rng)
     state = env.set_command(state, command)
 
-    reward_breakdown_sum = {
-        "velocity_tracking": 0.0,
-        "yaw_tracking": 0.0,
-        "upright": 0.0,
-        "height": 0.0,
-        "energy": 0.0,
-        "smoothness": 0.0,
-        "alive": 0.0,
-        "termination_penalty": 0.0,
-    }
+    reward_breakdown_sum = {name: 0.0 for name in REWARD_TERMS}
     achieved_local_velocities = []
     start_x = float(state.pipeline_state.qpos[0])
     final_x = start_x
     fall_count = 0
     steps = 0
 
+    step_fn = jax.jit(env.step)
     for _ in range(max_steps):
         rng, act_rng = jax.random.split(rng)
-        prev_action = state.info["prev_action"]
-        command_before_step = state.info["command"]
         action, _ = inference_fn(state.obs, act_rng)
-        action = jnp.asarray(action)
-        state = env.step(state, action)
+        state = step_fn(state, jnp.asarray(action))
         steps += 1
         final_x = float(state.pipeline_state.qpos[0])
 
-        breakdown = env._compute_reward_components(
-            mjx_data=state.pipeline_state,
-            action=action,
-            prev_action=prev_action,
-            command=command_before_step,
-            done=state.done > 0,
-        )
         for key in reward_breakdown_sum:
-            reward_breakdown_sum[key] += float(breakdown[key])
+            reward_breakdown_sum[key] += float(state.metrics[f"reward/{key}"])
 
         achieved_local_velocities.append(compute_local_velocity(state.pipeline_state))
 
         if float(state.done) > 0:
-            fall_count = 1
+            # Reaching the time limit also sets done; only count real falls.
+            fall_count = int(float(state.info["truncation"]) == 0.0)
             break
 
     mean_local_velocity = (
@@ -141,7 +156,7 @@ def evaluate_bundle(
 ) -> dict[str, Any]:
     inference_fn = create_inference_fn(bundle)
     env = create_brax_h1_env(
-        env_config=runtime_config.env,
+        env_config=fixed_command_env_config(runtime_config),
         reward_config=runtime_config.reward,
         dr_config=runtime_config.domain_randomization,
         termination_config=runtime_config.termination,
@@ -201,7 +216,7 @@ def record_video(
 ) -> None:
     inference_fn = create_inference_fn(bundle)
     env = create_brax_h1_env(
-        env_config=runtime_config.env,
+        env_config=fixed_command_env_config(runtime_config),
         reward_config=runtime_config.reward,
         dr_config=runtime_config.domain_randomization,
         termination_config=runtime_config.termination,
@@ -224,12 +239,19 @@ def record_video(
     renderer = mujoco.Renderer(scene_model, height=height, width=width)
     mj_data = mujoco.MjData(scene_model)
     frames = []
+    step_fn = jax.jit(env.step)
+    inference_fn = jax.jit(inference_fn)
+    # Physics runs at 1 / control_dt Hz; keep every n-th frame to hit the video fps.
+    frame_stride = max(int(round(1.0 / (env.control_dt * fps))), 1)
 
-    for _ in range(max_steps or runtime_config.evaluation.max_steps):
+    for step_idx in range(max_steps or runtime_config.evaluation.max_steps):
         rng, act_rng = jax.random.split(rng)
         action, _ = inference_fn(state.obs, act_rng)
-        action = jnp.asarray(action)
-        state = env.step(state, action)
+        state = step_fn(state, jnp.asarray(action))
+        if step_idx % frame_stride:
+            if float(state.done) > 0:
+                break
+            continue
 
         mj_data.qpos[:] = np.array(state.pipeline_state.qpos)
         mj_data.qvel[:] = np.array(state.pipeline_state.qvel)
@@ -251,7 +273,7 @@ def record_video(
         if float(state.done) > 0:
             break
 
-    imageio.mimsave(output_path, frames, fps=fps)
+    imageio.mimsave(output_path, frames, fps=1.0 / (env.control_dt * frame_stride))
     print(f"Saved video to {output_path}")
 
 

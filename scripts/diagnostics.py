@@ -9,12 +9,11 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import mujoco
 import numpy as np
 
 from physics_ai.config import load_runtime_config
 from physics_ai.envs.brax_wrapper import create_brax_h1_env
-from physics_ai.envs.domain_rand import DomainRandomizer
-from physics_ai.envs.h1_env import UnitreeH1Env
 
 
 def main():
@@ -56,14 +55,6 @@ def main():
         runtime_config = load_runtime_config(args.config)
         mark("config_load", "done")
 
-        mark("unitree_env_create", "start")
-        unitree_env = UnitreeH1Env(
-            config=runtime_config.env,
-            reward_config=runtime_config.reward,
-            termination_config=runtime_config.termination,
-        )
-        mark("unitree_env_create", "done")
-
         mark("brax_env_create", "start")
         brax_env = create_brax_h1_env(
             env_config=runtime_config.env,
@@ -75,11 +66,6 @@ def main():
 
         seed = 0
         rng = jax.random.PRNGKey(seed)
-        mark("unitree_reset", "start")
-        unitree_state = unitree_env.reset(rng)
-        jax.block_until_ready(unitree_state.obs)
-        mark("unitree_reset", "done")
-
         mark("brax_reset", "start")
         brax_state = brax_env.reset(rng)
         jax.block_until_ready(brax_state.obs)
@@ -87,23 +73,35 @@ def main():
 
         zero_command = jnp.array([0.0, 0.0, 0.0])
         mark("command_injection", "start")
-        unitree_obs = unitree_env._compute_obs(unitree_state.mjx_data, zero_command[None, :])
-        unitree_state = unitree_state._replace(obs=unitree_obs, command=zero_command[None, :])
         brax_state = brax_env.set_command(brax_state, zero_command)
         mark("command_injection", "done")
 
-        mark("reset_parity", "start")
-        reset_qpos_diff = float(
-            np.max(np.abs(np.array(unitree_state.mjx_data.qpos[0]) - np.array(brax_state.pipeline_state.qpos)))
-        )
-        reset_obs_diff = float(
-            np.max(np.abs(np.array(unitree_state.obs[0]) - np.array(brax_state.obs)))
-        )
-        mark("reset_parity", "done")
+        step_fn = jax.jit(brax_env.step)
+
+        mark("standing_settle", "start")
+        settle_state = brax_state
+        zero_action = jnp.zeros(brax_env.action_size)
+        for _ in range(50):
+            settle_state = step_fn(settle_state, zero_action)
+        settle_contact = np.array(brax_env.foot_contact(settle_state.pipeline_state)).tolist()
+        mark("standing_settle", "done")
+
+        mark("foot_lift", "start")
+        # Lift the left leg by bending hip and knee; the left foot should leave the floor.
+        lift_action = jnp.zeros(brax_env.action_size)
+        for joint, offset in (("left_hip_pitch", -0.6), ("left_knee", 1.2)):
+            joint_id = mujoco.mj_name2id(brax_env._mj_model, mujoco.mjtObj.mjOBJ_JOINT, joint)
+            actuator = int(np.where(brax_env._mj_model.actuator_trnid[:, 0] == joint_id)[0][0])
+            lift_action = lift_action.at[actuator].set(offset / runtime_config.env.action_scale)
+        lift_state = brax_state
+        for _ in range(10):
+            lift_state = step_fn(lift_state, lift_action)
+        lift_contact = np.array(brax_env.foot_contact(lift_state.pipeline_state)).tolist()
+        mark("foot_lift", "done")
 
         mark("fixed_action_step", "start")
         fixed_action = jnp.array([0.1] + [0.0] * (brax_env.action_size - 1))
-        stepped_state = brax_env.step(brax_state, fixed_action)
+        stepped_state = step_fn(brax_state, fixed_action)
         jax.block_until_ready(stepped_state.obs)
         qpos_delta = np.array(stepped_state.pipeline_state.qpos - brax_state.pipeline_state.qpos)
         qvel_delta = np.array(stepped_state.pipeline_state.qvel - brax_state.pipeline_state.qvel)
@@ -126,23 +124,6 @@ def main():
         tilt_triggers_done = bool(brax_env._compute_termination(tilt_state.pipeline_state))
         mark("termination_check_tilt", "done")
 
-        mark("domain_randomization_sample", "start")
-        domain_randomizer = DomainRandomizer(
-            config=runtime_config.domain_randomization,
-            num_envs=runtime_config.env.num_envs,
-        )
-        dr_sample = domain_randomizer.sample(rng)
-        dr_stats: dict[str, Any] = {}
-        for field_name in dr_sample.__dataclass_fields__:
-            value = getattr(dr_sample, field_name)
-            if value is not None:
-                dr_stats[field_name] = {
-                    "shape": list(value.shape),
-                    "mean": float(jnp.mean(value)),
-                    "std": float(jnp.std(value)),
-                }
-        mark("domain_randomization_sample", "done")
-
         mark("summary_build", "start")
         summary = {
             "seed": seed,
@@ -150,9 +131,11 @@ def main():
                 "last_completed": phase_state["last_completed"],
                 "elapsed_seconds": time.perf_counter() - start_time,
             },
-            "reset_parity": {
-                "max_qpos_abs_diff": reset_qpos_diff,
-                "max_obs_abs_diff": reset_obs_diff,
+            "feet": {
+                "contact_at_reset": np.array(brax_env.foot_contact(brax_state.pipeline_state)).tolist(),
+                "contact_after_1s_zero_action": settle_contact,
+                "base_height_after_1s": float(settle_state.pipeline_state.qpos[2]),
+                "contact_after_left_leg_lift": lift_contact,
             },
             "action_semantics": {
                 "qpos_delta_l2": float(np.linalg.norm(qpos_delta)),
@@ -164,11 +147,11 @@ def main():
                 "tilt_triggers_done": tilt_triggers_done,
             },
             "observation": {
-                "obs_dim_unitree": unitree_env.obs_dim,
-                "obs_dim_brax": brax_env.observation_size,
+                "obs_dim": brax_env.observation_size,
+                "obs_version": brax_env.obs_version,
             },
+            "initial_height": brax_env.diagnostics_summary()["initial_height"],
             "actuators": brax_env.diagnostics_summary()["actuators"],
-            "domain_randomization": dr_stats,
         }
         mark("summary_build", "done")
 

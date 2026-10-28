@@ -11,20 +11,20 @@ from mujoco import mjx
 
 @dataclass
 class DomainRandomizationConfig:
-    friction_enabled: bool = True
+    friction_enabled: bool = False
     friction_range: tuple[float, float] = (0.2, 1.0)
     
-    mass_enabled: bool = True
+    mass_enabled: bool = False
     mass_scale_range: tuple[float, float] = (0.9, 1.1)
     
-    motor_strength_enabled: bool = True
+    motor_strength_enabled: bool = False
     motor_strength_range: tuple[float, float] = (0.85, 1.15)
     
-    push_enabled: bool = True
+    push_enabled: bool = False
     push_magnitude_range: tuple[float, float] = (0.0, 50.0)
     push_interval_range: tuple[float, float] = (5.0, 15.0)
     
-    latency_enabled: bool = True
+    latency_enabled: bool = False
     latency_range_ms: tuple[int, int] = (0, 20)
     
     com_displacement_enabled: bool = False
@@ -32,6 +32,12 @@ class DomainRandomizationConfig:
     
     gravity_noise_enabled: bool = False
     gravity_noise_range: tuple[float, float] = (-0.1, 0.1)
+
+
+def any_enabled(config: DomainRandomizationConfig) -> bool:
+    return any(
+        value for name, value in vars(config).items() if name.endswith("_enabled")
+    )
 
 
 @flax.struct.dataclass

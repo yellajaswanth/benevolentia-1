@@ -17,23 +17,23 @@ def default_joint_angles() -> dict[str, float]:
     return {
         "left_hip_yaw": 0.0,
         "left_hip_roll": 0.0,
-        "left_hip_pitch": -0.4,
-        "left_knee": 0.8,
-        "left_ankle": -0.4,
+        "left_hip_pitch": -0.15,
+        "left_knee": 0.4,
+        "left_ankle": -0.25,
         "right_hip_yaw": 0.0,
         "right_hip_roll": 0.0,
-        "right_hip_pitch": -0.4,
-        "right_knee": 0.8,
-        "right_ankle": -0.4,
+        "right_hip_pitch": -0.15,
+        "right_knee": 0.4,
+        "right_ankle": -0.25,
         "torso": 0.0,
         "left_shoulder_pitch": 0.0,
-        "left_shoulder_roll": 0.0,
+        "left_shoulder_roll": 0.15,
         "left_shoulder_yaw": 0.0,
-        "left_elbow": 0.0,
+        "left_elbow": 1.25,
         "right_shoulder_pitch": 0.0,
-        "right_shoulder_roll": 0.0,
+        "right_shoulder_roll": -0.15,
         "right_shoulder_yaw": 0.0,
-        "right_elbow": 0.0,
+        "right_elbow": 1.25,
     }
 
 
@@ -62,12 +62,19 @@ class EvaluationConfig:
 
 
 @dataclass
+class NetworkConfig:
+    policy_hidden_layer_sizes: tuple[int, ...] = (512, 256, 128)
+    value_hidden_layer_sizes: tuple[int, ...] = (512, 256, 128)
+
+
+@dataclass
 class RuntimeConfig:
     env: EnvConfig
     reward: RewardConfig
     domain_randomization: DomainRandomizationConfig
     termination: TerminationConfig
     brax_ppo: dict[str, Any]
+    network: NetworkConfig
     evaluation: EvaluationConfig
     raw_config: dict[str, Any] = field(default_factory=dict)
 
@@ -84,9 +91,16 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
     termination_cfg = cfg.get("termination", {})
     dr_cfg = cfg.get("domain_randomization", {})
     train_cfg = cfg.get("training", {})
-    ppo_cfg = cfg.get("ppo", {})
     brax_ppo_cfg = cfg.get("brax_ppo", {})
+    network_cfg = cfg.get("network", {})
     eval_cfg = cfg.get("evaluation", {})
+
+    if "gait_frequency" in env_cfg:
+        raise ValueError(
+            "env.gait_frequency was replaced by gait_frequency_base + gait_frequency_per_mps "
+            "(speed-scaled gait clock). Policies trained with a fixed gait_frequency need the "
+            "code they were trained with; silently using the new defaults changes the gait clock."
+        )
 
     env = EnvConfig(
         num_envs=env_cfg.get("num_envs", 4096),
@@ -95,27 +109,22 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
         control_decimation=env_cfg.get("control_decimation", 4),
         action_scale=robot_cfg.get("action_scale", 0.25),
         default_joint_angles=robot_cfg.get("default_joint_angles", default_joint_angles()),
-        initial_height=robot_cfg.get("initial_height", 0.88),
+        initial_height=robot_cfg.get("initial_height"),
         vx_range=tuple(commands_cfg.get("vx_range", [-1.0, 1.0])),
         vy_range=tuple(commands_cfg.get("vy_range", [-0.5, 0.5])),
         vyaw_range=tuple(commands_cfg.get("vyaw_range", [-1.0, 1.0])),
         command_resample_time=commands_cfg.get("resample_time", 10.0),
+        gait_frequency_base=env_cfg.get("gait_frequency_base", 0.75),
+        gait_frequency_per_mps=env_cfg.get("gait_frequency_per_mps", 0.5),
+        stance_ratio=env_cfg.get("stance_ratio", 0.6),
+        stand_probability=commands_cfg.get("stand_probability", 0.0),
     )
 
-    reward = RewardConfig(
-        reward_scaling=rewards_cfg.get("reward_scaling", 0.1),
-        velocity_tracking_weight=rewards_cfg.get("velocity_tracking", {}).get("weight", 1.0),
-        velocity_tracking_scale=rewards_cfg.get("velocity_tracking", {}).get("exp_scale", 0.25),
-        yaw_rate_weight=rewards_cfg.get("yaw_rate_tracking", {}).get("weight", 0.5),
-        yaw_rate_scale=rewards_cfg.get("yaw_rate_tracking", {}).get("exp_scale", 0.25),
-        upright_weight=rewards_cfg.get("upright", {}).get("weight", 0.2),
-        height_weight=rewards_cfg.get("height", {}).get("weight", 0.1),
-        target_height=rewards_cfg.get("height", {}).get("target_height", env.initial_height),
-        energy_weight=rewards_cfg.get("energy", {}).get("weight", -0.001),
-        smoothness_weight=rewards_cfg.get("smoothness", {}).get("weight", -0.01),
-        alive_bonus=rewards_cfg.get("alive", {}).get("weight", 1.0),
-        termination_penalty=rewards_cfg.get("termination", {}).get("weight", -10.0),
-    )
+    # Flat mapping: every key under `rewards:` must be a RewardConfig field.
+    unknown_reward_keys = set(rewards_cfg) - set(RewardConfig.__dataclass_fields__)
+    if unknown_reward_keys:
+        raise ValueError(f"Unknown reward config keys: {sorted(unknown_reward_keys)}")
+    reward = RewardConfig(**rewards_cfg)
 
     termination = TerminationConfig(
         min_height=termination_cfg.get("min_height", 0.3),
@@ -124,37 +133,48 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
     )
 
     domain_randomization = DomainRandomizationConfig(
-        friction_enabled=dr_cfg.get("friction", {}).get("enabled", True),
+        friction_enabled=dr_cfg.get("friction", {}).get("enabled", False),
         friction_range=tuple(dr_cfg.get("friction", {}).get("range", [0.2, 1.0])),
-        mass_enabled=dr_cfg.get("mass", {}).get("enabled", True),
+        mass_enabled=dr_cfg.get("mass", {}).get("enabled", False),
         mass_scale_range=tuple(dr_cfg.get("mass", {}).get("scale_range", [0.9, 1.1])),
-        motor_strength_enabled=dr_cfg.get("motor_strength", {}).get("enabled", True),
+        motor_strength_enabled=dr_cfg.get("motor_strength", {}).get("enabled", False),
         motor_strength_range=tuple(dr_cfg.get("motor_strength", {}).get("scale_range", [0.85, 1.15])),
-        push_enabled=dr_cfg.get("push_force", {}).get("enabled", True),
+        push_enabled=dr_cfg.get("push_force", {}).get("enabled", False),
         push_magnitude_range=tuple(dr_cfg.get("push_force", {}).get("magnitude_range", [0.0, 50.0])),
         push_interval_range=tuple(dr_cfg.get("push_force", {}).get("interval", [5.0, 15.0])),
-        latency_enabled=dr_cfg.get("latency", {}).get("enabled", True),
+        latency_enabled=dr_cfg.get("latency", {}).get("enabled", False),
         latency_range_ms=tuple(dr_cfg.get("latency", {}).get("range_ms", [0, 20])),
     )
 
+    # Brax semantics: each PPO update consumes batch_size * num_minibatches *
+    # unroll_length env steps, and batch_size * num_minibatches must be a
+    # multiple of num_envs. batch_size = num_envs / num_minibatches gives one
+    # unroll per env per update.
+    num_minibatches = brax_ppo_cfg.get("num_minibatches", 32)
     brax_ppo = {
-        "num_timesteps": train_cfg.get("total_timesteps", 400_000_000),
-        "num_evals": train_cfg.get("num_evals", 100),
+        "num_timesteps": train_cfg.get("total_timesteps", 200_000_000),
+        "num_evals": train_cfg.get("num_evals", 20),
         "episode_length": env.episode_length,
         "num_envs": env.num_envs,
-        "learning_rate": brax_ppo_cfg.get("learning_rate", ppo_cfg.get("learning_rate", 3e-4)),
-        "entropy_cost": brax_ppo_cfg.get("entropy_cost", 0.001),
-        "discounting": brax_ppo_cfg.get("discounting", ppo_cfg.get("gamma", 0.99)),
-        "unroll_length": brax_ppo_cfg.get("unroll_length", train_cfg.get("rollout_length", 32)),
-        "batch_size": brax_ppo_cfg.get("batch_size", env.num_envs * train_cfg.get("rollout_length", 32)),
-        "num_minibatches": brax_ppo_cfg.get("num_minibatches", ppo_cfg.get("num_minibatches", 32)),
-        "num_updates_per_batch": brax_ppo_cfg.get("num_updates_per_batch", ppo_cfg.get("num_epochs", 4)),
+        "learning_rate": brax_ppo_cfg.get("learning_rate", 3e-4),
+        "entropy_cost": brax_ppo_cfg.get("entropy_cost", 0.01),
+        "discounting": brax_ppo_cfg.get("discounting", 0.97),
+        "unroll_length": brax_ppo_cfg.get("unroll_length", 20),
+        "batch_size": brax_ppo_cfg.get("batch_size", max(env.num_envs // num_minibatches, 1)),
+        "num_minibatches": num_minibatches,
+        "num_updates_per_batch": brax_ppo_cfg.get("num_updates_per_batch", 4),
         "normalize_observations": brax_ppo_cfg.get("normalize_observations", True),
         "reward_scaling": brax_ppo_cfg.get("reward_scaling", 1.0),
-        "clipping_epsilon": brax_ppo_cfg.get("clipping_epsilon", ppo_cfg.get("clip_ratio", 0.2)),
-        "gae_lambda": brax_ppo_cfg.get("gae_lambda", ppo_cfg.get("gae_lambda", 0.95)),
+        "clipping_epsilon": brax_ppo_cfg.get("clipping_epsilon", 0.2),
+        "gae_lambda": brax_ppo_cfg.get("gae_lambda", 0.95),
+        "max_grad_norm": brax_ppo_cfg.get("max_grad_norm", 1.0),
         "seed": train_cfg.get("seed", 42),
     }
+
+    network = NetworkConfig(
+        policy_hidden_layer_sizes=tuple(network_cfg.get("policy_hidden_layer_sizes", (512, 256, 128))),
+        value_hidden_layer_sizes=tuple(network_cfg.get("value_hidden_layer_sizes", (512, 256, 128))),
+    )
 
     scenarios = []
     for idx, item in enumerate(eval_cfg.get("fixed_commands", [])):
@@ -176,6 +196,7 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
         domain_randomization=domain_randomization,
         termination=termination,
         brax_ppo=brax_ppo,
+        network=network,
         evaluation=evaluation,
         raw_config=cfg,
     )
