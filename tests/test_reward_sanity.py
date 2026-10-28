@@ -7,6 +7,8 @@ more than standing.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import jax.numpy as jnp
 import pytest
 
@@ -29,13 +31,17 @@ def make_inputs(**overrides) -> RewardInputs:
         prev_action=jnp.zeros(NU),
         torques=jnp.zeros(NU),
         hip_offset=jnp.zeros(4),
+        torso_offset=jnp.array(0.0),
+        arm_swing_error=jnp.zeros(2),
+        arm_posture_offset=jnp.zeros(6),
+        feet_lateral_gap=jnp.array(0.30),
         foot_contact=jnp.array([True, True]),
         desired_contact=jnp.array([True, False]),
         first_contact=jnp.array([False, False]),
         air_time=jnp.zeros(2),
         foot_height=jnp.zeros(2),
         # Mid-swing of the right foot: the gait clock wants it at swing height.
-        foot_height_target=jnp.array([0.0, 0.08]),
+        foot_height_target=jnp.array([0.0, 0.06]),
         foot_vel_xy=jnp.zeros((2, 2)),
         done=jnp.array(False),
     )
@@ -52,7 +58,7 @@ def walking_on_command() -> RewardInputs:
     return make_inputs(
         base_lin_vel=jnp.array([0.5, 0.0, 0.0]),
         foot_contact=jnp.array([True, False]),
-        foot_height=jnp.array([0.0, 0.08]),
+        foot_height=jnp.array([0.0, 0.06]),
     )
 
 
@@ -70,9 +76,9 @@ def walking_touchdown() -> RewardInputs:
 
 @pytest.fixture(params=["defaults", "yaml"])
 def config(request) -> RewardConfig:
-    if request.param == "defaults":
-        return RewardConfig()
-    return load_runtime_config("configs/h1_walking.yaml").reward
+    config = RewardConfig() if request.param == "defaults" else load_runtime_config("configs/h1_walking.yaml").reward
+    # The env fills target_height from the derived standing height; stand in for it here.
+    return dataclasses.replace(config, target_height=0.98)
 
 
 def test_standing_earns_at_most_40_percent_of_velocity_reward(config):
@@ -107,6 +113,19 @@ def test_feet_phase_rewards_lifting_the_swing_foot(config):
     standing = compute_reward_terms(standing_still(), config)["feet_phase"]
     stepping = compute_reward_terms(walking_on_command(), config)["feet_phase"]
     assert float(stepping) > float(standing) + 0.3
+    assert float(standing) < 0.7
+
+
+def test_wide_stance_is_penalized(config):
+    hip_width, _ = compute_reward(walking_on_command(), config)
+    waddle, _ = compute_reward(dataclasses.replace(walking_on_command(), feet_lateral_gap=jnp.array(0.45)), config)
+    assert float(waddle) < float(hip_width)
+
+
+def test_arms_following_opposite_leg_beat_frozen_arms(config):
+    swinging = compute_reward_terms(make_inputs(arm_swing_error=jnp.zeros(2)), config)["arm_swing"]
+    frozen = compute_reward_terms(make_inputs(arm_swing_error=jnp.array([0.2, -0.2])), config)["arm_swing"]
+    assert config.arm_swing * float(swinging) > config.arm_swing * float(frozen)
 
 
 def test_air_time_reward_is_never_negative(config):

@@ -23,6 +23,20 @@ FOOT_GEOM_NAMES = (
     ("right_foot1", "right_foot2", "right_foot3"),
 )
 HIP_YAW_ROLL_JOINTS = ("left_hip_yaw", "left_hip_roll", "right_hip_yaw", "right_hip_roll")
+TORSO_JOINT = "torso"
+# Each arm swings with the opposite leg: (shoulder pitch, opposite hip pitch).
+ARM_SWING_PAIRS = (
+    ("left_shoulder_pitch", "right_hip_pitch"),
+    ("right_shoulder_pitch", "left_hip_pitch"),
+)
+ARM_POSTURE_JOINTS = (
+    "left_shoulder_roll",
+    "left_shoulder_yaw",
+    "left_elbow",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow",
+)
 
 
 def default_asset_path() -> Path:
@@ -195,11 +209,22 @@ def foot_contact(contact: Any, floor_id: jnp.ndarray, foot_geom_ids: jnp.ndarray
 
 
 def sample_command_single(rng: jax.Array, config: EnvConfig) -> jnp.ndarray:
-    rng, *keys = jax.random.split(rng, 4)
+    rng, *keys = jax.random.split(rng, 5)
     vx = jax.random.uniform(keys[0], (), minval=config.vx_range[0], maxval=config.vx_range[1])
     vy = jax.random.uniform(keys[1], (), minval=config.vy_range[0], maxval=config.vy_range[1])
     vyaw = jax.random.uniform(keys[2], (), minval=config.vyaw_range[0], maxval=config.vyaw_range[1])
-    return jnp.stack([vx, vy, vyaw])
+    stand = jax.random.uniform(keys[3]) < config.stand_probability
+    return jnp.where(stand, 0.0, jnp.stack([vx, vy, vyaw]))
+
+
+def gait_frequency(command: jnp.ndarray, config: EnvConfig) -> jnp.ndarray:
+    return config.gait_frequency_base + config.gait_frequency_per_mps * jnp.linalg.norm(command[:2])
+
+
+def feet_lateral_gap(qpos: jnp.ndarray, foot_pos: jnp.ndarray) -> jnp.ndarray:
+    """Left-minus-right sole distance along the pelvis's lateral axis."""
+    local = jax.vmap(lambda p: quat_rotate_inverse(qpos[3:7], p - qpos[:3]))(foot_pos)
+    return local[0, 1] - local[1, 1]
 
 
 def compute_termination(

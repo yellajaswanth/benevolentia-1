@@ -3,36 +3,41 @@ env:
   episode_length: 1000
   dt: 0.005
   control_decimation: 4
-  # Gait clock: left foot leads, right foot half a cycle behind.
-  gait_frequency: 1.25
-  stance_ratio: 0.55
+  # Gait clock: left foot leads, right foot half a cycle behind. Frequency scales
+  # with commanded speed: 0.75 Hz standing-pace -> 1.0 Hz at 0.5 m/s -> 1.25 Hz at 1 m/s.
+  gait_frequency_base: 0.75
+  gait_frequency_per_mps: 0.5
+  stance_ratio: 0.6
   
 robot:
   asset_path: "assets/unitree_h1/scene.xml"  # robot + floor; h1.xml alone has no ground
   num_actions: 19
-  action_scale: 0.25
+  action_scale: 0.3
   # initial_height is derived from default_joint_angles so the feet start on the
   # floor (about 0.98 m for this pose). Only set it to override.
+  # Near Unitree's own H1 stance (hip -0.1, knee 0.3, ankle -0.2), slightly more
+  # bent for margin. Arms hang down: at elbow = 0 the H1 forearm points forward,
+  # so elbow 1.25 rad puts it mostly downward with a relaxed bend.
   default_joint_angles:
     left_hip_yaw: 0.0
     left_hip_roll: 0.0
-    left_hip_pitch: -0.4
-    left_knee: 0.8
-    left_ankle: -0.4
+    left_hip_pitch: -0.15
+    left_knee: 0.4
+    left_ankle: -0.25
     right_hip_yaw: 0.0
     right_hip_roll: 0.0
-    right_hip_pitch: -0.4
-    right_knee: 0.8
-    right_ankle: -0.4
+    right_hip_pitch: -0.15
+    right_knee: 0.4
+    right_ankle: -0.25
     torso: 0.0
     left_shoulder_pitch: 0.0
-    left_shoulder_roll: 0.0
+    left_shoulder_roll: 0.15
     left_shoulder_yaw: 0.0
-    left_elbow: 0.0
+    left_elbow: 1.25
     right_shoulder_pitch: 0.0
-    right_shoulder_roll: 0.0
+    right_shoulder_roll: -0.15
     right_shoulder_yaw: 0.0
-    right_elbow: 0.0
+    right_elbow: 1.25
 
 observation:
   joint_pos: true
@@ -43,10 +48,11 @@ observation:
   projected_gravity: true
 
 commands:
-  # Curriculum stage A: one fixed forward command. Widen once this walks.
-  vx_range: [0.5, 0.5]
+  # Curriculum stage B: forward speeds 0-1 m/s, 10% stand-still commands.
+  vx_range: [0.0, 1.0]
   vy_range: [0.0, 0.0]
   vyaw_range: [0.0, 0.0]
+  stand_probability: 0.1
   resample_time: 10.0
 
 rewards:
@@ -59,17 +65,22 @@ rewards:
   feet_air_time: 1.0
   feet_air_time_max: 0.5
   feet_phase: 1.0
-  feet_phase_sigma: 0.01
-  swing_height_target: 0.08
+  feet_phase_sigma: 0.008
+  swing_height_target: 0.06
   feet_slip: -0.05
   orientation: -1.0
-  base_height: -10.0
-  target_height: 0.98
-  lin_vel_z: -2.0
+  base_height: -1.0       # target_height omitted: derived from the default pose
+  lin_vel_z: -0.5
   ang_vel_xy: -0.05
   action_rate: -0.01
   torques: -1.0e-5
   hip_deviation: -1.0
+  feet_distance: -5.0          # mild anchor; H1 legs hang 0.41 m apart at zero hip roll
+  feet_distance_target: 0.30
+  torso_deviation: -2.0
+  arm_swing: -2.0
+  arm_swing_gain: 1.0
+  arm_posture: -0.5
   alive: 0.15
   termination: -10.0
   move_command_threshold: 0.1

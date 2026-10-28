@@ -16,6 +16,8 @@
 > - `scripts/evaluate.py` rebuilt the policy without observation normalisation, so every evaluation and video showed a broken policy.
 >
 > The run 1 swing-height penalty was too weak to produce stepping, so it was replaced by a Playground-style `feet_phase` reward, trained on curriculum stage A (fixed 0.5 m/s). Run 2 (200M steps, 32 min on one RTX 4090) walks: full 20 s episodes, 0.48–0.49 m/s, alternating 1.25 Hz gait.
+>
+> **Update (run 3: stage B + natural-gait changes):** forward commands 0–1 m/s plus 10% stand-still; gait clock scaled with speed (0.75 + 0.5·v Hz); straighter default pose with arms hanging; 6 cm swing target; mild height and bob penalties; new torso, arm-swing and stance-width terms. 200M steps in 34 min. No falls at stand, 0.25, 0.5 and 1.0 m/s; arms swing 16–23° with the opposite leg, torso twist down from 14° to 4–6°, 20–30% double support. Remaining: 7–9% speed undershoot, 14–28° heading drift over 20 s (no heading term), choppy ~2 Hz stepping at 1 m/s and stiff knees (action range ±0.3 rad). Also fixed: fixed-command evaluations were being re-sampled every 10 s.
 
 1. **The reward pays for standing still.** With `velocity_tracking.exp_scale: 2.0` and commands of 0 to 0.5 m/s, a robot standing perfectly still earns about 95% of the velocity reward. On top of that it gets `alive: 1.0` every step and a −10 penalty for falling. "Don't fall" is the best strategy available.
 2. **Nothing teaches it to step.** The reward has no foot terms (air time, contact timing, swing height, slip). The observation has no gait clock and no previous action, and the foot geoms have no names, so foot contact can't be measured at all.

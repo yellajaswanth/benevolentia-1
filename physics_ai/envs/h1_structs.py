@@ -17,5 +17,10 @@ class EnvConfig:
     vy_range: tuple[float, float] = (-0.5, 0.5)
     vyaw_range: tuple[float, float] = (-1.0, 1.0)
     command_resample_time: float = 10.0
-    gait_frequency: float = 1.25
-    stance_ratio: float = 0.55
+    # Gait clock frequency (Hz) = base + per_mps * commanded planar speed, so
+    # slow walking takes slower, longer steps instead of a fixed fast cadence.
+    gait_frequency_base: float = 0.75
+    gait_frequency_per_mps: float = 0.5
+    stance_ratio: float = 0.6
+    # Fraction of sampled commands that are "stand still".
+    stand_probability: float = 0.0

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import pickle
 from pathlib import Path
@@ -80,6 +81,12 @@ def create_inference_fn(bundle: dict[str, Any]):
     return make_inference_fn(bundle["params"], deterministic=True)
 
 
+def fixed_command_env_config(runtime_config: RuntimeConfig):
+    """Scenarios hold one command for the whole episode; training's periodic
+    command resampling would otherwise replace it after resample_time."""
+    return dataclasses.replace(runtime_config.env, command_resample_time=1e6)
+
+
 def compute_local_velocity(pipeline_state) -> np.ndarray:
     base_quat = pipeline_state.qpos[3:7]
     base_lin_vel = pipeline_state.qvel[:3]
@@ -149,7 +156,7 @@ def evaluate_bundle(
 ) -> dict[str, Any]:
     inference_fn = create_inference_fn(bundle)
     env = create_brax_h1_env(
-        env_config=runtime_config.env,
+        env_config=fixed_command_env_config(runtime_config),
         reward_config=runtime_config.reward,
         dr_config=runtime_config.domain_randomization,
         termination_config=runtime_config.termination,
@@ -209,7 +216,7 @@ def record_video(
 ) -> None:
     inference_fn = create_inference_fn(bundle)
     env = create_brax_h1_env(
-        env_config=runtime_config.env,
+        env_config=fixed_command_env_config(runtime_config),
         reward_config=runtime_config.reward,
         dr_config=runtime_config.domain_randomization,
         termination_config=runtime_config.termination,

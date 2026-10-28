@@ -17,23 +17,23 @@ def default_joint_angles() -> dict[str, float]:
     return {
         "left_hip_yaw": 0.0,
         "left_hip_roll": 0.0,
-        "left_hip_pitch": -0.4,
-        "left_knee": 0.8,
-        "left_ankle": -0.4,
+        "left_hip_pitch": -0.15,
+        "left_knee": 0.4,
+        "left_ankle": -0.25,
         "right_hip_yaw": 0.0,
         "right_hip_roll": 0.0,
-        "right_hip_pitch": -0.4,
-        "right_knee": 0.8,
-        "right_ankle": -0.4,
+        "right_hip_pitch": -0.15,
+        "right_knee": 0.4,
+        "right_ankle": -0.25,
         "torso": 0.0,
         "left_shoulder_pitch": 0.0,
-        "left_shoulder_roll": 0.0,
+        "left_shoulder_roll": 0.15,
         "left_shoulder_yaw": 0.0,
-        "left_elbow": 0.0,
+        "left_elbow": 1.25,
         "right_shoulder_pitch": 0.0,
-        "right_shoulder_roll": 0.0,
+        "right_shoulder_roll": -0.15,
         "right_shoulder_yaw": 0.0,
-        "right_elbow": 0.0,
+        "right_elbow": 1.25,
     }
 
 
@@ -95,6 +95,13 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
     network_cfg = cfg.get("network", {})
     eval_cfg = cfg.get("evaluation", {})
 
+    if "gait_frequency" in env_cfg:
+        raise ValueError(
+            "env.gait_frequency was replaced by gait_frequency_base + gait_frequency_per_mps "
+            "(speed-scaled gait clock). Policies trained with a fixed gait_frequency need the "
+            "code they were trained with; silently using the new defaults changes the gait clock."
+        )
+
     env = EnvConfig(
         num_envs=env_cfg.get("num_envs", 4096),
         episode_length=env_cfg.get("episode_length", 1000),
@@ -107,8 +114,10 @@ def load_runtime_config(config_path: str | Path) -> RuntimeConfig:
         vy_range=tuple(commands_cfg.get("vy_range", [-0.5, 0.5])),
         vyaw_range=tuple(commands_cfg.get("vyaw_range", [-1.0, 1.0])),
         command_resample_time=commands_cfg.get("resample_time", 10.0),
-        gait_frequency=env_cfg.get("gait_frequency", 1.25),
-        stance_ratio=env_cfg.get("stance_ratio", 0.55),
+        gait_frequency_base=env_cfg.get("gait_frequency_base", 0.75),
+        gait_frequency_per_mps=env_cfg.get("gait_frequency_per_mps", 0.5),
+        stance_ratio=env_cfg.get("stance_ratio", 0.6),
+        stand_probability=commands_cfg.get("stand_probability", 0.0),
     )
 
     # Flat mapping: every key under `rewards:` must be a RewardConfig field.

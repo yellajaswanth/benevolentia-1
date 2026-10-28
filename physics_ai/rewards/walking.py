@@ -21,17 +21,29 @@ class RewardConfig:
     feet_air_time: float = 1.0
     feet_air_time_max: float = 0.5
     feet_phase: float = 1.0
-    feet_phase_sigma: float = 0.01
-    swing_height_target: float = 0.08
+    # Keep sigma tight relative to swing height: at peak swing a planted foot
+    # should still score well below 1, or standing collects the stepping reward.
+    feet_phase_sigma: float = 0.008
+    swing_height_target: float = 0.06
     feet_slip: float = -0.05
     orientation: float = -1.0
-    base_height: float = -10.0
-    target_height: float = 0.98
-    lin_vel_z: float = -2.0
+    # Mild: a natural gait bobs a few cm per step; a strong penalty forces gliding.
+    base_height: float = -1.0
+    # None: the env fills in its derived standing height.
+    target_height: float | None = None
+    lin_vel_z: float = -0.5
     ang_vel_xy: float = -0.05
     action_rate: float = -0.01
     torques: float = -1e-5
     hip_deviation: float = -1.0
+    # Mild anchor only. The H1's legs hang 0.41 m apart at zero hip roll; run 2
+    # settled at ~0.29 m by itself, so this just discourages drifting either way.
+    feet_distance: float = -5.0
+    feet_distance_target: float = 0.30
+    torso_deviation: float = -2.0
+    arm_swing: float = -2.0
+    arm_swing_gain: float = 1.0
+    arm_posture: float = -0.5
     alive: float = 0.15
     termination: float = -10.0
     move_command_threshold: float = 0.1
@@ -50,6 +62,10 @@ class RewardInputs:
     prev_action: jnp.ndarray        # (nu,)
     torques: jnp.ndarray            # (nu,)
     hip_offset: jnp.ndarray         # (4,) hip yaw/roll minus default
+    torso_offset: jnp.ndarray       # () torso yaw minus default
+    arm_swing_error: jnp.ndarray    # (2,) shoulder pitch offset minus gain * opposite hip pitch offset
+    arm_posture_offset: jnp.ndarray # (6,) shoulder roll/yaw and elbow minus default
+    feet_lateral_gap: jnp.ndarray   # () left-minus-right sole distance, pelvis frame
     foot_contact: jnp.ndarray       # (2,) bool
     desired_contact: jnp.ndarray    # (2,) bool, from the gait clock
     first_contact: jnp.ndarray      # (2,) bool, touchdown this step
@@ -74,6 +90,10 @@ REWARD_TERMS = (
     "action_rate",
     "torques",
     "hip_deviation",
+    "feet_distance",
+    "torso_deviation",
+    "arm_swing",
+    "arm_posture",
     "alive",
     "termination",
 )
@@ -108,6 +128,11 @@ def compute_reward_terms(inputs: RewardInputs, config: RewardConfig) -> dict[str
         "action_rate": jnp.sum((inputs.action - inputs.prev_action) ** 2),
         "torques": jnp.sum(inputs.torques**2),
         "hip_deviation": jnp.sum(inputs.hip_offset**2),
+        "feet_distance": (inputs.feet_lateral_gap - config.feet_distance_target) ** 2,
+        "torso_deviation": inputs.torso_offset**2,
+        # Counter-swing: each arm follows the opposite thigh, as in human walking.
+        "arm_swing": jnp.sum(inputs.arm_swing_error**2),
+        "arm_posture": jnp.sum(inputs.arm_posture_offset**2),
         "alive": jnp.ones(()),
         "termination": inputs.done.astype(jnp.float32),
     }

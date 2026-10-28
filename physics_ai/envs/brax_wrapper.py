@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 from typing import Any, Dict
 
 import flax.struct
@@ -13,8 +14,11 @@ from physics_ai.envs.domain_rand import DomainRandomizationConfig, any_enabled
 from physics_ai.envs.h1_shared import (
     FLOOR_GEOM_NAME,
     FOOT_GEOM_NAMES,
+    ARM_POSTURE_JOINTS,
+    ARM_SWING_PAIRS,
     FOOT_SITE_NAMES,
     HIP_YAW_ROLL_JOINTS,
+    TORSO_JOINT,
     OBS_VERSION,
     actuator_mode_summary,
     base_kinematics,
@@ -25,6 +29,8 @@ from physics_ai.envs.h1_shared import (
     default_asset_path,
     desired_foot_contact,
     desired_foot_height,
+    feet_lateral_gap,
+    gait_frequency,
     foot_contact,
     name_ids,
     observation_size,
@@ -88,6 +94,10 @@ class BraxH1EnvWrapper(brax_base.Env):
             self._initial_height = standing_height(self._mj_model, self._default_qpos)
         else:
             self._initial_height = self._env_config.initial_height
+        if self._reward_config.target_height is None:
+            self._reward_config = dataclasses.replace(
+                self._reward_config, target_height=self._initial_height
+            )
 
     def _setup_indices(self) -> None:
         qpos_indices = []
@@ -106,7 +116,12 @@ class BraxH1EnvWrapper(brax_base.Env):
             [name_ids(self._mj_model, mujoco.mjtObj.mjOBJ_GEOM, names) for names in FOOT_GEOM_NAMES]
         )
         self._foot_site_ids = name_ids(self._mj_model, mujoco.mjtObj.mjOBJ_SITE, FOOT_SITE_NAMES)
-        self._hip_joint_indices = jnp.array([joint_names.index(name) for name in HIP_YAW_ROLL_JOINTS])
+        index = lambda names: jnp.array([joint_names.index(name) for name in names])
+        self._hip_joint_indices = index(HIP_YAW_ROLL_JOINTS)
+        self._torso_joint_index = joint_names.index(TORSO_JOINT)
+        self._shoulder_pitch_indices = index(tuple(arm for arm, _ in ARM_SWING_PAIRS))
+        self._opposite_hip_pitch_indices = index(tuple(hip for _, hip in ARM_SWING_PAIRS))
+        self._arm_posture_indices = index(ARM_POSTURE_JOINTS)
 
         self._num_actions = self._mj_model.nu
         self._obs_dim = observation_size(len(qpos_indices), self._num_actions)
@@ -209,6 +224,8 @@ class BraxH1EnvWrapper(brax_base.Env):
         done = self._compute_termination(mjx_data)
         base = base_kinematics(mjx_data.qpos, mjx_data.qvel)
         joint_pos = mjx_data.qpos[self._joint_qpos_indices]
+        joint_offset = joint_pos - self._default_joint_pos
+        arm_swing_target = self._reward_config.arm_swing_gain * joint_offset[self._opposite_hip_pitch_indices]
 
         reward, weighted_terms = compute_reward(
             RewardInputs(
@@ -220,7 +237,11 @@ class BraxH1EnvWrapper(brax_base.Env):
                 action=action,
                 prev_action=state.info["prev_action"],
                 torques=mjx_data.actuator_force,
-                hip_offset=(joint_pos - self._default_joint_pos)[self._hip_joint_indices],
+                hip_offset=joint_offset[self._hip_joint_indices],
+                torso_offset=joint_offset[self._torso_joint_index],
+                arm_swing_error=joint_offset[self._shoulder_pitch_indices] - arm_swing_target,
+                arm_posture_offset=joint_offset[self._arm_posture_indices],
+                feet_lateral_gap=feet_lateral_gap(mjx_data.qpos, foot_pos),
                 foot_contact=contact,
                 desired_contact=desired_foot_contact(phase, self._env_config.stance_ratio),
                 foot_height_target=desired_foot_height(
@@ -248,7 +269,7 @@ class BraxH1EnvWrapper(brax_base.Env):
             self._sample_command(cmd_key),
             state.info["command"],
         )
-        new_phase = (phase + dt * self._env_config.gait_frequency) % 1.0
+        new_phase = (phase + dt * gait_frequency(state.info["command"], self._env_config)) % 1.0
 
         metrics = {
             **state.metrics,

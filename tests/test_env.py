@@ -15,7 +15,7 @@ import pytest
 from physics_ai.config import load_runtime_config
 from physics_ai.envs.brax_wrapper import create_brax_h1_env
 from physics_ai.envs.domain_rand import DomainRandomizationConfig
-from physics_ai.envs.h1_shared import OBS_VERSION, compute_termination, observation_size
+from physics_ai.envs.h1_shared import OBS_VERSION, compute_termination, gait_frequency, observation_size
 
 
 @pytest.fixture(scope="module")
@@ -108,7 +108,7 @@ def test_observation_layout(env, reset_state):
 
 def test_gait_clock_advances(env, step_fn, reset_state, runtime_config):
     state = step_fn(reset_state, jnp.zeros(env.action_size))
-    expected = (reset_state.info["phase"] + env.control_dt * runtime_config.env.gait_frequency) % 1.0
+    expected = (reset_state.info["phase"] + env.control_dt * gait_frequency(reset_state.info["command"], runtime_config.env)) % 1.0
     assert np.isclose(float(state.info["phase"]), float(expected))
 
 
@@ -136,6 +136,25 @@ def test_auto_reset_restarts_episode_bookkeeping(runtime_config):
         assert int(state.info["step_count"].max()) < 15
     # Time limit of 15 steps over 50 steps: ~3 resets per env, not one per step.
     assert dones <= 2 * 4
+
+
+def test_slower_commands_step_slower(runtime_config):
+    slow = float(gait_frequency(jnp.array([0.25, 0.0, 0.0]), runtime_config.env))
+    fast = float(gait_frequency(jnp.array([1.0, 0.0, 0.0]), runtime_config.env))
+    assert slow < fast
+
+
+def test_feet_start_at_the_h1_neutral_width(env, reset_state):
+    from physics_ai.envs.h1_shared import feet_lateral_gap
+
+    d = reset_state.pipeline_state
+    gap = float(feet_lateral_gap(d.qpos, d.site_xpos[env._foot_site_ids]))
+    # H1 legs hang 0.406 m apart at zero hip roll (hip pitch joints sit outboard).
+    assert 0.38 < gap < 0.43
+
+
+def test_reward_target_height_defaults_to_standing_height(env):
+    assert env._reward_config.target_height == env.diagnostics_summary()["initial_height"]
 
 
 def test_enabled_domain_randomization_is_refused():
